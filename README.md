@@ -47,6 +47,19 @@ pnpm build
 
 See [docs/LOCAL_DEVELOPMENT.md](docs/LOCAL_DEVELOPMENT.md) for details.
 
+## Live testnet deployment (2026-08-06)
+
+| Contract | Address |
+| --- | --- |
+| `TestChip` | [`0x31E4261aF4Ed630E78d7438Ebcb25Ca7c3c15711`](https://testnet-mega.etherscan.io/address/0x31E4261aF4Ed630E78d7438Ebcb25Ca7c3c15711) |
+| `DrandRandomnessProvider` | [`0x801466769247D89B3d768C4Ad5B74D83466cD14b`](https://testnet-mega.etherscan.io/address/0x801466769247D89B3d768C4Ad5B74D83466cD14b) |
+| `BlackjackTable` | [`0x261ab01D3c6F06BccBb49380bD27cd9303A4dB2f`](https://testnet-mega.etherscan.io/address/0x261ab01D3c6F06BccBb49380bD27cd9303A4dB2f) |
+
+All three are source-verified on [Sourcify](https://sourcify.dev) (exact match,
+chain 6343); deploy block 26317836. House bankroll: 1,000,000 CHIP. Sanity-played
+live via the SDK bot through real drand beacons. Testnet state may be rolled
+back by network upgrades — redeploy with `docs/DEPLOYMENT.md` if so.
+
 ## Network (verified against docs.megaeth.com)
 
 | | Testnet |

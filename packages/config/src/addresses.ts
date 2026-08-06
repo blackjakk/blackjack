@@ -18,11 +18,18 @@ export interface BlackjackDeployment {
 }
 
 /**
- * Deployed contract addresses per chain id.
- *
- * Empty until a deployment is performed (see docs/DEPLOYMENT.md); record the
- * addresses printed by `forge script script/Deploy.s.sol --sig "runTestnet()"` here.
+ * Deployed contract addresses per chain id (see docs/DEPLOYMENT.md).
  * Local anvil deployments can be injected at runtime via environment variables
  * instead of being committed.
+ *
+ * MegaETH testnet deployment (2026-08-06, deployer 0x97eB…a476, Sourcify-verified):
+ * NOTE: testnet state may be rolled back by network upgrades; redeploy if so.
  */
-export const DEPLOYMENTS: Partial<Record<number, BlackjackDeployment>> = {};
+export const DEPLOYMENTS: Partial<Record<number, BlackjackDeployment>> = {
+    6343: {
+        chip: "0x31E4261aF4Ed630E78d7438Ebcb25Ca7c3c15711",
+        table: "0x261ab01D3c6F06BccBb49380bD27cd9303A4dB2f",
+        randomnessProvider: "0x801466769247D89B3d768C4Ad5B74D83466cD14b",
+        deployBlock: 26317836n,
+    },
+};

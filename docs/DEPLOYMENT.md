@@ -71,6 +71,35 @@ verification that did not happen.
    to the operating accounts; the deployer renounces what it doesn't need.
 4. Run through docs/SECURITY_CHECKLIST.md.
 
+## MegaETH-specific gas gotchas (learned from the live deploy)
+
+* MegaETH charges **storage gas** on top of compute gas; Foundry's local EVM
+  only models compute gas, so `forge script` under-estimates and fails with
+  `intrinsic gas too low`. Fix (per official docs): pass `--skip-simulation`
+  so gas is estimated by the remote RPC.
+* Mini-blocks confirm in ~10 ms — faster than `forge script` tracks nonces, so
+  batched broadcast can abort with "EOA nonce changed unexpectedly" after the
+  CREATEs land, and the remaining calls may be mined-but-reverted. If
+  `liquidity()` reads 0 after deploy, finish funding manually (`cast send`
+  estimates via the remote RPC by default):
+  `cast send $CHIP 'mint(address,uint256)' …`, `approve`, then
+  `cast send $TABLE 'fundHouse(uint256)' …`.
+
+## Deployment record — 2026-08-06 (chain 6343)
+
+| Contract | Address | Verification |
+| --- | --- | --- |
+| TestChip | `0x31E4261aF4Ed630E78d7438Ebcb25Ca7c3c15711` | Sourcify exact_match |
+| DrandRandomnessProvider (`minFutureRounds=2`) | `0x801466769247D89B3d768C4Ad5B74D83466cD14b` | Sourcify exact_match |
+| BlackjackTable (min 1 / max 1000 CHIP) | `0x261ab01D3c6F06BccBb49380bD27cd9303A4dB2f` | Sourcify exact_match |
+
+Deploy block 26317836; admin/treasury = deployer `0x97eB…a476` (throwaway
+testnet key). House funded with 1,000,000 CHIP. Etherscan-side verification was
+not performed (requires an Etherscan API key); Sourcify verification succeeded
+for all three contracts. Post-deploy sanity: two full hands played live through
+real drand quicknet beacons (faucet → bet → hit/stand → beacon fulfill →
+settlement), including a dealer-natural ENHC settlement.
+
 ## Realtime API note
 
 MegaETH mini-blocks land in ~10 ms. Standard `eth_sendRawTransaction` +
