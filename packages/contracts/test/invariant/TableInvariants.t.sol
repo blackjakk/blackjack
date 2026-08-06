@@ -17,10 +17,12 @@ contract TableInvariants is Test {
     Handler handler;
     address admin = makeAddr("admin");
 
-    // Ghost: first-observed settlement data per game, to prove terminal immutability.
-    mapping(uint256 => bool) seenSettled;
-    mapping(uint256 => uint256) settledPayout;
-    mapping(uint256 => BlackjackTable.Outcome) settledOutcome;
+    // Ghost: first-observed terminal data per game, to prove terminal immutability
+    // (a game can settle or cancel at most once, and never change afterwards).
+    mapping(uint256 => bool) seenTerminal;
+    mapping(uint256 => BlackjackTable.GameState) terminalState;
+    mapping(uint256 => uint256) terminalPayout;
+    mapping(uint256 => BlackjackTable.Outcome) terminalOutcome;
 
     function setUp() public {
         chip = new TestChip(admin);
@@ -60,25 +62,33 @@ contract TableInvariants is Test {
         assertEq(table.availableLiquidity(), table.houseFunds() - table.totalReservedLiability());
     }
 
-    /// Invariant: settled games are immutable (settle at most once) and each payout is
-    /// bounded by the player's own stake plus the reservation made for that game.
+    /// Invariant: terminal games (settled or cancelled) are immutable — a game settles
+    /// at most once — and each payout is bounded by the player's own stake plus the
+    /// reservation made for that game.
     function invariant_settleOnceAndPayoutBounded() public {
         uint256 next = table.nextGameId();
         for (uint256 id = 1; id < next; ++id) {
             BlackjackTable.Game memory g = table.getGame(id);
-            if (g.state == BlackjackTable.GameState.SETTLED) {
+            bool terminal = g.state == BlackjackTable.GameState.SETTLED
+                || g.state == BlackjackTable.GameState.CANCELLED;
+            if (terminal) {
                 uint256 stake = g.doubled ? uint256(g.wager) * 2 : g.wager;
                 assertLe(g.payout, stake + g.reservedLiability, "payout exceeds max reserved");
-                if (!seenSettled[id]) {
-                    seenSettled[id] = true;
-                    settledPayout[id] = g.payout;
-                    settledOutcome[id] = g.outcome;
+                if (g.state == BlackjackTable.GameState.CANCELLED) {
+                    assertEq(g.payout, stake, "cancel must refund exactly the stake");
+                }
+                if (!seenTerminal[id]) {
+                    seenTerminal[id] = true;
+                    terminalState[id] = g.state;
+                    terminalPayout[id] = g.payout;
+                    terminalOutcome[id] = g.outcome;
                 } else {
-                    assertEq(settledPayout[id], g.payout, "settled payout changed");
-                    assertEq(uint8(settledOutcome[id]), uint8(g.outcome), "outcome changed");
+                    assertEq(uint8(terminalState[id]), uint8(g.state), "terminal state changed");
+                    assertEq(terminalPayout[id], g.payout, "terminal payout changed");
+                    assertEq(uint8(terminalOutcome[id]), uint8(g.outcome), "outcome changed");
                 }
             } else {
-                assertFalse(seenSettled[id], "settled game left terminal state");
+                assertFalse(seenTerminal[id], "game left terminal state");
             }
         }
     }

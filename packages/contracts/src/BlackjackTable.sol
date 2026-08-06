@@ -5,6 +5,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {IRandomnessProvider} from "./interfaces/IRandomnessProvider.sol";
 import {IRandomnessConsumer} from "./interfaces/IRandomnessConsumer.sol";
 import {BlackjackLib} from "./lib/BlackjackLib.sol";
@@ -17,7 +18,7 @@ import {BlackjackLib} from "./lib/BlackjackLib.sol";
 ///      latest irreversible action (see docs/RANDOMNESS.md). House worst-case liability
 ///      (2x wager: covers both a 3:2 natural and a doubled win) is reserved at bet time
 ///      so settlement can never exceed available funds.
-contract BlackjackTable is IRandomnessConsumer, AccessControl, ReentrancyGuard {
+contract BlackjackTable is IRandomnessConsumer, AccessControl, ReentrancyGuard, Pausable {
     using SafeERC20 for IERC20;
     using BlackjackLib for uint256;
 
@@ -73,6 +74,15 @@ contract BlackjackTable is IRandomnessConsumer, AccessControl, ReentrancyGuard {
     uint256 public minWager;
     uint256 public maxWager;
 
+    /// @notice Window after which a game stuck waiting for randomness can be cancelled
+    ///         for a full refund. Long by design: fulfillment is permissionless, so a
+    ///         short window would make the player's "free look" (withhold a bad beacon,
+    ///         then cancel) too easy — see docs/RANDOMNESS.md trust assumption 2.
+    uint64 public randomnessTimeout = 1 hours;
+
+    uint64 internal constant MIN_TIMEOUT = 10 minutes;
+    uint64 internal constant MAX_TIMEOUT = 7 days;
+
     /// @dev Upper bound keeping all payout arithmetic comfortably inside uint96.
     uint256 internal constant ABSOLUTE_MAX_WAGER = type(uint96).max / 4;
 
@@ -103,6 +113,9 @@ contract BlackjackTable is IRandomnessConsumer, AccessControl, ReentrancyGuard {
     );
     event PlayerCardDealt(uint256 indexed gameId, uint8 card, uint8 newTotal);
     event PlayerStood(uint256 indexed gameId);
+    event PlayerDoubled(uint256 indexed gameId, uint256 newStake);
+    event GameCancelled(uint256 indexed gameId, address indexed player, uint256 refund);
+    event RandomnessTimeoutUpdated(uint64 timeout);
     event DealerPlayed(
         uint256 indexed gameId, uint256 dealerCards, uint8 dealerCount, uint8 dealerTotal
     );
@@ -127,6 +140,9 @@ contract BlackjackTable is IRandomnessConsumer, AccessControl, ReentrancyGuard {
     error UnknownRequest(uint256 requestId);
     error RequestMismatch(uint256 gameId, uint256 requestId);
     error WithdrawExceedsAvailable(uint256 requested, uint256 available);
+    error CannotDouble(uint256 gameId);
+    error TimeoutNotReached(uint256 gameId, uint256 cancellableAt);
+    error NotAuthorizedToCancel(uint256 gameId);
 
     // ---------------------------------------------------------------- setup
 
@@ -156,7 +172,7 @@ contract BlackjackTable is IRandomnessConsumer, AccessControl, ReentrancyGuard {
     /// @notice Escrow `wager` chips, reserve the house's worst-case liability and request
     ///         the initial-deal seed. The wager is locked before any randomness for the
     ///         deal can exist.
-    function placeBet(uint256 wager) external nonReentrant returns (uint256 gameId) {
+    function placeBet(uint256 wager) external nonReentrant whenNotPaused returns (uint256 gameId) {
         if (wager < minWager || wager > maxWager) {
             revert WagerOutOfBounds(wager, minWager, maxWager);
         }
@@ -189,7 +205,7 @@ contract BlackjackTable is IRandomnessConsumer, AccessControl, ReentrancyGuard {
     }
 
     /// @notice Take one more card. Locks the decision, then requests a fresh seed.
-    function hit() external nonReentrant {
+    function hit() external nonReentrant whenNotPaused {
         (uint256 gameId, Game storage g) = _activeGame(msg.sender);
         if (g.state != GameState.PLAYER_TURN) revert InvalidState(gameId, g.state);
         g.state = GameState.AWAITING_HIT_RANDOMNESS;
@@ -197,11 +213,76 @@ contract BlackjackTable is IRandomnessConsumer, AccessControl, ReentrancyGuard {
     }
 
     /// @notice Stop taking cards; the dealer plays out from a fresh seed.
+    /// @dev Deliberately allowed while paused: standing adds no new risk and lets
+    ///      in-flight games wind down (see docs/STATE_MACHINE.md pause semantics).
     function stand() external nonReentrant {
         (uint256 gameId, Game storage g) = _activeGame(msg.sender);
         if (g.state != GameState.PLAYER_TURN) revert InvalidState(gameId, g.state);
         emit PlayerStood(gameId);
         _startDealerPhase(gameId, g);
+    }
+
+    /// @notice Double the stake on the initial two cards: one card is dealt, then the
+    ///         hand auto-stands. The extra wager is escrowed now; the 2x-wager liability
+    ///         reserved at bet time already covers the doubled worst case, so a double
+    ///         can never fail for house-liquidity reasons.
+    function double() external nonReentrant whenNotPaused {
+        (uint256 gameId, Game storage g) = _activeGame(msg.sender);
+        if (g.state != GameState.PLAYER_TURN) revert InvalidState(gameId, g.state);
+        if (g.playerCount != 2 || g.doubled) revert CannotDouble(gameId);
+
+        g.doubled = true;
+        totalPlayerEscrow += g.wager;
+        g.state = GameState.AWAITING_HIT_RANDOMNESS;
+        emit PlayerDoubled(gameId, uint256(g.wager) * 2);
+
+        chip.safeTransferFrom(msg.sender, address(this), g.wager);
+        _requestRandomness(gameId, g);
+    }
+
+    /// @notice Cancel a game stuck waiting for randomness past the timeout and refund
+    ///         the full stake. Callable by the game's player or an admin only — a
+    ///         third party must not be able to force-cancel someone's pending
+    ///         (possibly winning) hand.
+    /// @dev Free-look caveat: the committed beacon is public once its round publishes,
+    ///      so a player could compute a bad pending card and simply wait for this
+    ///      refund. Mitigation: fulfillment is permissionless and expected from a house
+    ///      keeper within seconds; the timeout is long. Documented in docs/RANDOMNESS.md.
+    ///      Allowed while paused so a pause can never trap player funds.
+    function cancelTimedOutGame(uint256 gameId) external nonReentrant {
+        Game storage g = _games[gameId];
+        if (g.player == address(0)) revert NoSuchGame(gameId);
+        if (msg.sender != g.player && !hasRole(DEFAULT_ADMIN_ROLE, msg.sender)) {
+            revert NotAuthorizedToCancel(gameId);
+        }
+        if (
+            g.state != GameState.AWAITING_INITIAL_RANDOMNESS
+                && g.state != GameState.AWAITING_HIT_RANDOMNESS
+                && g.state != GameState.AWAITING_DEALER_RANDOMNESS
+        ) {
+            revert InvalidState(gameId, g.state);
+        }
+        uint256 cancellableAt = uint256(g.requestTimestamp) + randomnessTimeout;
+        if (block.timestamp < cancellableAt) revert TimeoutNotReached(gameId, cancellableAt);
+
+        // Consume the pending request so a late beacon can no longer act on this game.
+        delete requestGame[g.pendingProvider][g.pendingRequestId];
+        g.pendingRequestId = 0;
+        g.pendingProvider = address(0);
+        g.requestTimestamp = 0;
+
+        uint256 stake = g.doubled ? uint256(g.wager) * 2 : g.wager;
+        g.state = GameState.CANCELLED;
+        g.outcome = Outcome.CANCELLED_REFUND;
+        // Safe: stake <= 2 * ABSOLUTE_MAX_WAGER < uint96.max.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        g.payout = uint96(stake);
+        activeGameOf[g.player] = 0;
+        totalPlayerEscrow -= stake;
+        totalReservedLiability -= g.reservedLiability;
+
+        emit GameCancelled(gameId, g.player, stake);
+        chip.safeTransfer(g.player, stake);
     }
 
     // ---------------------------------------------------------------- randomness callback
@@ -280,6 +361,23 @@ contract BlackjackTable is IRandomnessConsumer, AccessControl, ReentrancyGuard {
         if (address(provider_) == address(0)) revert ZeroAddress();
         randomnessProvider = provider_;
         emit RandomnessProviderUpdated(address(provider_));
+    }
+
+    function setRandomnessTimeout(uint64 timeout_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (timeout_ < MIN_TIMEOUT || timeout_ > MAX_TIMEOUT) revert InvalidConfig();
+        randomnessTimeout = timeout_;
+        emit RandomnessTimeoutUpdated(timeout_);
+    }
+
+    /// @notice Emergency stop for NEW risk only: blocks placeBet, hit and double.
+    ///         Fulfillment, stand, settlement and timeout cancellation stay open so
+    ///         in-flight games always wind down and no player funds are trapped.
+    function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _unpause();
     }
 
     // ---------------------------------------------------------------- views

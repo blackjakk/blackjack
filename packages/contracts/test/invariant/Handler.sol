@@ -94,6 +94,38 @@ contract Handler is CommonBase, StdCheats, StdUtils {
         table.stand();
     }
 
+    function doubleAction(uint256 actorIdx) external {
+        address actor = _actor(actorIdx);
+        uint256 gameId = table.activeGameOf(actor);
+        if (gameId == 0) return;
+        BlackjackTable.Game memory g = table.getGame(gameId);
+        if (g.state != BlackjackTable.GameState.PLAYER_TURN || g.playerCount != 2 || g.doubled) {
+            return;
+        }
+        if (chip.balanceOf(actor) < g.wager) {
+            vm.prank(admin);
+            chip.mint(actor, uint256(g.wager) * 2);
+        }
+        vm.prank(actor);
+        table.double();
+    }
+
+    /// Warp past the timeout and cancel a stuck game (exercises the CANCELLED path).
+    function cancelAction(uint256 actorIdx) external {
+        address actor = _actor(actorIdx);
+        uint256 gameId = table.activeGameOf(actor);
+        if (gameId == 0) return;
+        BlackjackTable.Game memory g = table.getGame(gameId);
+        if (
+            g.state != BlackjackTable.GameState.AWAITING_INITIAL_RANDOMNESS
+                && g.state != BlackjackTable.GameState.AWAITING_HIT_RANDOMNESS
+                && g.state != BlackjackTable.GameState.AWAITING_DEALER_RANDOMNESS
+        ) return;
+        vm.warp(block.timestamp + table.randomnessTimeout());
+        vm.prank(actor);
+        table.cancelTimedOutGame(gameId);
+    }
+
     function fundHouse(uint256 amount) external {
         amount = bound(amount, 0, 1_000_000e18);
         if (amount == 0) return;
