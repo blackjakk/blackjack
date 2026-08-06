@@ -3,10 +3,12 @@
 import {useCallback, useEffect, useMemo, useState} from "react";
 import {
     useAccount,
+    useBalance,
     useConnect,
     useDisconnect,
     usePublicClient,
     useReadContract,
+    useSwitchChain,
     useWatchContractEvent,
     useWriteContract,
 } from "wagmi";
@@ -32,6 +34,8 @@ import {
     CHIP_ADDRESS,
     PROVIDER_ADDRESS,
     PROVIDER_KIND,
+    GAS_FAUCET_URL,
+    activeChain,
     isConfigured,
     txUrl,
 } from "../lib/config.ts";
@@ -49,11 +53,17 @@ function fmt(x: bigint | undefined): string {
 }
 
 export default function Page() {
-    const {address, isConnected} = useAccount();
+    const {address, isConnected, chainId: walletChainId} = useAccount();
     const {connect, connectors} = useConnect();
     const {disconnect} = useDisconnect();
+    const {switchChain, isPending: switching} = useSwitchChain();
     const publicClient = usePublicClient();
     const {writeContractAsync} = useWriteContract();
+    const wrongNetwork = isConnected && walletChainId !== activeChain.id;
+    const {data: gasBalance} = useBalance({
+        address,
+        query: {refetchInterval: 5000, enabled: isConnected && !wrongNetwork},
+    });
 
     const [wagerInput, setWagerInput] = useState("10");
     const [lastGameId, setLastGameId] = useState<bigint | null>(null);
@@ -278,6 +288,47 @@ export default function Page() {
                 )}
             </div>
 
+            {wrongNetwork && (
+                <div className="panel row" style={{borderColor: "#7a5600"}}>
+                    <span className="status">
+                        Your wallet is on another network. This table lives on{" "}
+                        <strong>{activeChain.name}</strong> (chain {activeChain.id}).
+                    </span>
+                    <button disabled={switching} onClick={() => switchChain({chainId: activeChain.id})}>
+                        {switching ? "Check your wallet…" : `Switch / add ${activeChain.name}`}
+                    </button>
+                </div>
+            )}
+
+            {isConnected && !wrongNetwork && (chipBalance ?? 0n) === 0n && noGame && (
+                <div className="panel">
+                    <div className="hand-title">Getting started (everything here is free)</div>
+                    <ol className="steps">
+                        <li>
+                            <strong>Gas:</strong>{" "}
+                            {gasBalance !== undefined && gasBalance.value > 0n ? (
+                                <>✅ you have {Number(formatEther(gasBalance.value)).toFixed(4)} testnet ETH</>
+                            ) : (
+                                <>
+                                    grab free testnet ETH at{" "}
+                                    <a href={GAS_FAUCET_URL} target="_blank" rel="noreferrer">
+                                        testnet.megaeth.com
+                                    </a>{" "}
+                                    (human check, ~30s)
+                                </>
+                            )}
+                        </li>
+                        <li>
+                            <strong>Chips:</strong> claim 1000 free CHIP with the faucet button below
+                        </li>
+                        <li>
+                            <strong>Play:</strong> place a bet — cards come from the drand public
+                            randomness beacon, verified onchain
+                        </li>
+                    </ol>
+                </div>
+            )}
+
             <div className="panel stats">
                 <div className="stat">
                     <div className="label">Your CHIP balance</div>
@@ -368,7 +419,9 @@ export default function Page() {
                                     : "…"}
                             </span>
                             <button
-                                className="secondary"
+                                className={
+                                    PROVIDER_KIND !== "drand" || drandReady ? "pulse" : "secondary"
+                                }
                                 disabled={!!busy || (PROVIDER_KIND === "drand" && !drandReady)}
                                 onClick={onSubmitBeacon}
                             >

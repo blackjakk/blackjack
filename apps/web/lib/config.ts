@@ -1,17 +1,26 @@
 import type {Address, Chain} from "viem";
-import {megaethTestnet} from "@blackjack/config";
+import {megaethTestnet, DEPLOYMENTS} from "@blackjack/config";
 
 /**
- * Frontend deployment configuration — addresses come from env so no code change is
- * needed per deployment. See .env.example at the repo root.
+ * Frontend deployment configuration. Defaults to the live MegaETH-testnet
+ * deployment recorded in @blackjack/config, so `pnpm dev` works zero-config;
+ * env vars override for local anvil or a redeploy (see .env.example).
  */
-export const TABLE_ADDRESS = (process.env.NEXT_PUBLIC_TABLE_ADDRESS ?? "") as Address;
-export const CHIP_ADDRESS = (process.env.NEXT_PUBLIC_CHIP_ADDRESS ?? "") as Address;
-export const PROVIDER_ADDRESS = (process.env.NEXT_PUBLIC_PROVIDER_ADDRESS ?? "") as Address;
+const live = DEPLOYMENTS[megaethTestnet.id];
+
+export const TABLE_ADDRESS = (process.env.NEXT_PUBLIC_TABLE_ADDRESS ??
+    live?.table ??
+    "") as Address;
+export const CHIP_ADDRESS = (process.env.NEXT_PUBLIC_CHIP_ADDRESS ?? live?.chip ?? "") as Address;
+export const PROVIDER_ADDRESS = (process.env.NEXT_PUBLIC_PROVIDER_ADDRESS ??
+    live?.randomnessProvider ??
+    "") as Address;
 /** "drand" on MegaETH testnet; "mock" only for local anvil dev. */
 export const PROVIDER_KIND = process.env.NEXT_PUBLIC_PROVIDER_KIND ?? "drand";
 export const EXPLORER_URL =
     process.env.NEXT_PUBLIC_EXPLORER_URL ?? "https://testnet-mega.etherscan.io";
+/** Official MegaETH faucet for gas ETH (Turnstile-gated, humans only). */
+export const GAS_FAUCET_URL = "https://testnet.megaeth.com";
 
 const CHAIN_ID = Number(process.env.NEXT_PUBLIC_CHAIN_ID ?? 6343);
 const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL ?? "https://carrot.megaeth.com/rpc";

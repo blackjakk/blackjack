@@ -199,3 +199,25 @@ a {
     flex-direction: column;
     gap: 4px;
 }
+
+.steps {
+    margin: 8px 0 0 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 14px;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgb(79 140 255 / 55%);
+    }
+    50% {
+        box-shadow: 0 0 0 8px rgb(79 140 255 / 0%);
+    }
+}
+
+button.pulse {
+    animation: pulse 1.4s infinite;
+    background: var(--accent);
+}

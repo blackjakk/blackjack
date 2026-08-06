@@ -38,7 +38,10 @@ Status legend: [ ] open, [x] done, [~] partially / documented residual.
 - [ ] Roles transferred/renounced per DEPLOYMENT.md after deploy
 - [ ] Keeper running before opening the table (free-look window)
 - [ ] Explorer verification completed where supported
-- [ ] Frontend wallet write-path exercised on the live deployment (read-path verified headless against anvil; writes exercised via SDK/bot only so far)
+- [x] Frontend wallet write-path exercised on the live deployment: full hand
+      clicked through headless Chromium with an injected EIP-1193 wallet against
+      chain 6343 (approve, placeBet, beacon submit, stand, dealer beacon,
+      PLAYER_WIN settlement rendered with correct balances)
 
 ## Explicit non-claims
 This project is **not audited** and **not production-ready**; completing
