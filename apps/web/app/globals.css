@@ -221,3 +221,208 @@ button.pulse {
     animation: pulse 1.4s infinite;
     background: var(--accent);
 }
+
+/* ---------------------------------------------------------------- chat */
+
+button.tiny {
+    font-size: 13px;
+    padding: 6px 10px;
+}
+
+button.ghost {
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 2px 6px;
+    font-size: 13px;
+}
+
+button.ghost:hover {
+    color: var(--text);
+}
+
+button.active-mode {
+    outline: 2px solid var(--accent);
+}
+
+.chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.chat-nick,
+.chat-context,
+.chat-composer {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+}
+
+.chat-composer input,
+.chat-nick input {
+    flex: 1;
+    width: auto;
+}
+
+.chat-fund {
+    background: rgb(79 140 255 / 10%);
+    border: 1px solid #2c4270;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--muted);
+    margin: 8px 0;
+}
+
+.chat-list {
+    height: 420px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 8px 4px;
+    border: 1px solid #223252;
+    border-radius: 8px;
+    background: rgb(0 0 0 / 15%);
+}
+
+.msg {
+    display: flex;
+    gap: 8px;
+    padding: 2px 6px;
+}
+
+.msg.mine .msg-author {
+    color: var(--accent);
+}
+
+.avatar {
+    width: 30px;
+    height: 30px;
+    min-width: 30px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    color: white;
+    margin-top: 2px;
+}
+
+.msg-body {
+    min-width: 0;
+    flex: 1;
+}
+
+.msg-meta {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+}
+
+.msg-author {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.msg-time {
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.msg-quote {
+    border-left: 3px solid var(--accent);
+    padding: 2px 8px;
+    margin: 4px 0;
+    font-size: 12px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.msg-content {
+    font-size: 14px;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.msg-content.deleted {
+    color: var(--muted);
+    font-style: italic;
+}
+
+.msg-gif {
+    max-width: 220px;
+    max-height: 180px;
+    border-radius: 8px;
+    margin-top: 4px;
+}
+
+.msg-reactions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+    align-items: center;
+}
+
+.chip {
+    background: var(--panel2);
+    border: 1px solid #2c4270;
+    border-radius: 999px;
+    color: var(--text);
+    font-size: 12px;
+    padding: 2px 8px;
+}
+
+.chip.active {
+    border-color: var(--accent);
+    background: rgb(79 140 255 / 18%);
+}
+
+.msg-tools {
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.msg:hover .msg-tools {
+    opacity: 1;
+}
+
+.emoji-tray {
+    display: flex;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.emoji-tray .ghost {
+    font-size: 17px;
+}
+
+.gif-tray {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    overflow-x: auto;
+}
+
+.gif-tray img {
+    height: 80px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.chat-context {
+    background: var(--panel2);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--muted);
+    justify-content: space-between;
+}

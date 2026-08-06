@@ -92,6 +92,7 @@ verification that did not happen.
 | TestChip | `0x31E4261aF4Ed630E78d7438Ebcb25Ca7c3c15711` | Sourcify exact_match |
 | DrandRandomnessProvider (`minFutureRounds=2`) | `0x801466769247D89B3d768C4Ad5B74D83466cD14b` | Sourcify exact_match |
 | BlackjackTable (min 1 / max 1000 CHIP) | `0x261ab01D3c6F06BccBb49380bD27cd9303A4dB2f` | Sourcify exact_match |
+| TableChat (onchain chat, block 26320341) | `0x9768a366EAA389fAc374D0736fee4Cd07D02e180` | Sourcify exact_match |
 
 Deploy block 26317836; admin/treasury = deployer `0x97eB…a476` (throwaway
 testnet key). House funded with 1,000,000 CHIP. Etherscan-side verification was

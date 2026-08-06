@@ -29,6 +29,7 @@ import {
     type Card,
 } from "@blackjack/sdk";
 import {drandPublishTime} from "@blackjack/config";
+import {Chat} from "./chat.tsx";
 import {
     TABLE_ADDRESS,
     CHIP_ADDRESS,
@@ -468,6 +469,8 @@ export default function Page() {
                     </div>
                 </div>
             )}
+
+            <Chat />
 
             <div className="panel status">
                 Fully onchain: cards come from committed randomness (drand quicknet via MegaETH&apos;s

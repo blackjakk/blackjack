@@ -3,11 +3,6 @@ name: Deploy web to GitHub Pages
 on:
   push:
     branches: ["claude/megaeth-blackjack-mvp-cix8jl", main]
-    paths:
-      - "apps/web/**"
-      - "packages/config/**"
-      - "packages/sdk/**"
-      - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
 
 permissions:

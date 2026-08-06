@@ -9,8 +9,5 @@
   },
   "dependencies": {
     "@openzeppelin/contracts": "5.4.0"
-  },
-  "devDependencies": {
-    "forge-std": "github:foundry-rs/forge-std#v1.14.0"
   }
 }

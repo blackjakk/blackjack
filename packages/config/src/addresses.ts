@@ -15,6 +15,9 @@ export interface BlackjackDeployment {
     randomnessProvider: Address;
     /** Block the deployment landed in — event queries start here. */
     deployBlock: bigint;
+    /** Onchain chat room (TableChat), if deployed. */
+    chat?: Address;
+    chatDeployBlock?: bigint;
 }
 
 /**
@@ -31,5 +34,7 @@ export const DEPLOYMENTS: Partial<Record<number, BlackjackDeployment>> = {
         table: "0x261ab01D3c6F06BccBb49380bD27cd9303A4dB2f",
         randomnessProvider: "0x801466769247D89B3d768C4Ad5B74D83466cD14b",
         deployBlock: 26317836n,
+        chat: "0x9768a366EAA389fAc374D0736fee4Cd07D02e180",
+        chatDeployBlock: 26320341n,
     },
 };

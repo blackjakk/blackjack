@@ -26,3 +26,15 @@
    logs each load; deep history depends on RPC log retention.
 10. **Gas/fee UX.** Players need testnet ETH from the official MegaETH
     faucet for gas; the chip faucet does not provide gas.
+11. **Chat is unmoderated and permanent.** TableChat has no owner and no
+    moderator by design: nothing can be censored, which also means spam and
+    abuse can only be hidden client-side (per-device mute). Every message is
+    public forever in chain logs — deletes/edits are tombstones/overlays, the
+    original stays readable to anyone. Onchain rate limits: 2s per-address
+    cooldown + size caps only.
+12. **Chat burner key lives in localStorage.** Clearing site data discards
+    the chat identity and any dust ETH on it. It must only ever hold testnet
+    gas dust.
+13. **Chat history loading grows with chain age.** The UI replays TableChat
+    logs from the deploy block on each load (chunked getLogs); after months
+    of activity an indexer would be needed.
