@@ -1,0 +1,26 @@
+# deps
+node_modules/
+
+# foundry
+packages/contracts/cache/
+packages/contracts/out/
+packages/contracts/broadcast/*/dry-run/
+packages/contracts/coverage/
+lcov.info
+
+# next.js
+apps/web/.next/
+apps/web/out/
+
+# build
+dist/
+*.tsbuildinfo
+
+# env & secrets — never commit keys
+.env
+.env.*
+!.env.example
+
+# misc
+.DS_Store
+*.log

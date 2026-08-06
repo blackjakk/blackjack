@@ -1,0 +1,34 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  packages/contracts:
+    dependencies:
+      '@openzeppelin/contracts':
+        specifier: 5.4.0
+        version: 5.4.0
+    devDependencies:
+      forge-std:
+        specifier: github:foundry-rs/forge-std#v1.14.0
+        version: git+https://git@github.com:foundry-rs/forge-std.git#1801b0541f4fda118a10798fd3486bb7051c5dd6
+
+packages:
+
+  '@openzeppelin/contracts@5.4.0':
+    resolution: {integrity: sha512-eCYgWnLg6WO+X52I16TZt8uEjbtdkgLC0SUX/xnAksjjrQI4Xfn4iBRoI5j55dmlOhDv1Y7BoR3cU7e3WWhC6A==}
+
+  forge-std@git+https://git@github.com:foundry-rs/forge-std.git#1801b0541f4fda118a10798fd3486bb7051c5dd6:
+    resolution: {commit: 1801b0541f4fda118a10798fd3486bb7051c5dd6, repo: git@github.com:foundry-rs/forge-std.git, type: git}
+    version: 1.14.0
+
+snapshots:
+
+  '@openzeppelin/contracts@5.4.0': {}
+
+  forge-std@git+https://git@github.com:foundry-rs/forge-std.git#1801b0541f4fda118a10798fd3486bb7051c5dd6: {}
