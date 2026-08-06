@@ -5,6 +5,8 @@ node_modules/
 packages/contracts/cache/
 packages/contracts/out/
 packages/contracts/broadcast/*/dry-run/
+# local anvil deployment records (testnet records ARE committed)
+packages/contracts/broadcast/**/31337/
 packages/contracts/coverage/
 lcov.info
 
