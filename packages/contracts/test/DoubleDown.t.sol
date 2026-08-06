@@ -134,7 +134,7 @@ contract DoubleDownTest is TableTestBase {
         // Player spends everything else, keeping only the original wager escrowed.
         uint256 gameId = dealHand(W, FIVE, SIX, TEN);
         vm.startPrank(player);
-        chip.transfer(admin, chip.balanceOf(player));
+        assertTrue(chip.transfer(admin, chip.balanceOf(player)));
         vm.expectRevert(); // ERC20InsufficientBalance from transferFrom
         table.double();
         vm.stopPrank();

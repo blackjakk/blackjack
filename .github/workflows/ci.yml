@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Install workspace deps (OZ + forge-std via npm)
+        run: pnpm install --frozen-lockfile
+        working-directory: .
+      - name: Format check
+        run: forge fmt --check
+      - name: Build
+        run: forge build --deny-warnings
+      - name: Tests (unit + fuzz + invariant)
+        run: forge test -vv
+
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck config
+        run: pnpm --filter @blackjack/config build
+      - name: Typecheck + unit-test SDK
+        run: |
+          pnpm --filter @blackjack/sdk build
+          pnpm --filter @blackjack/sdk test
+      - name: Build web
+        run: pnpm --filter web build

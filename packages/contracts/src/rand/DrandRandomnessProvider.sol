@@ -71,8 +71,8 @@ contract DrandRandomnessProvider is IRandomnessProvider {
 
     /// @notice Unix time at which `round` becomes producible by drand.
     function publishTime(uint64 round) public view returns (uint256) {
-        return uint256(verifier.GENESIS_TIMESTAMP())
-            + uint256(round - 1) * verifier.PERIOD_SECONDS();
+        return
+            uint256(verifier.GENESIS_TIMESTAMP()) + uint256(round - 1) * verifier.PERIOD_SECONDS();
     }
 
     /// @inheritdoc IRandomnessProvider
@@ -90,10 +90,7 @@ contract DrandRandomnessProvider is IRandomnessProvider {
 
         requestId = nextRequestId++;
         requests[requestId] = Request({
-            consumer: msg.sender,
-            revealRound: revealRound,
-            fulfilled: false,
-            gameId: gameId
+            consumer: msg.sender, revealRound: revealRound, fulfilled: false, gameId: gameId
         });
         emit RandomnessRequested(
             requestId, msg.sender, gameId, revealRound, publishTime(revealRound)

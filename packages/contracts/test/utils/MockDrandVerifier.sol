@@ -36,8 +36,7 @@ contract MockDrandVerifier is IDrandOracleQuicknet {
         ok = keccak256(sig) == keccak256(sigFor(round));
         if (ok) {
             normalizedRoundHash = keccak256(abi.encode("normalized", round));
-            chainScopedHash =
-                keccak256(abi.encode("scoped", round, address(this), block.chainid));
+            chainScopedHash = keccak256(abi.encode("scoped", round, address(this), block.chainid));
         }
     }
 }

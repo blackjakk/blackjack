@@ -148,7 +148,7 @@ contract Handler is CommonBase, StdCheats, StdUtils {
         amount = bound(amount, 1, 1_000e18);
         vm.startPrank(admin);
         chip.mint(admin, amount);
-        chip.transfer(address(table), amount);
+        require(chip.transfer(address(table), amount), "donate transfer failed");
         vm.stopPrank();
         ghostTotalDonated += amount;
     }
