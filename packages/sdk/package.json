@@ -12,7 +12,8 @@
     "build": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "bot": "node --experimental-strip-types src/bot-runner.ts",
-    "keeper": "node --experimental-strip-types src/keeper-runner.ts"
+    "keeper": "node --experimental-strip-types src/keeper-runner.ts",
+    "keeper:sweep": "node --experimental-strip-types src/keeper-sweep.ts"
   },
   "dependencies": {
     "@blackjack/config": "workspace:*",

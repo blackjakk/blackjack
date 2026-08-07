@@ -8,7 +8,10 @@
    beacon for an entire timeout window, the player may cancel for a full
    refund after having been able to compute the pending cards offchain.
    Player-favorable only; requires total keeper failure; documented in
-   RANDOMNESS.md / THREAT_MODEL.md (T2).
+   RANDOMNESS.md / THREAT_MODEL.md (T2). Mitigated in this repo by (a) the
+   frontend's auto-reveal (any open tab submits beacons) and (b) the
+   scheduled keeper sweep (`.github/workflows/keeper.yml`, every 15 min vs
+   the 1 h timeout) when the `KEEPER_PRIVATE_KEY` secret is configured.
 3. **House keeper required for good UX.** Without a keeper, someone must
    manually submit beacons (the frontend can do it, but an abandoned tab
    stalls the hand until another submitter or the timeout).

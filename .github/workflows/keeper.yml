@@ -1,0 +1,35 @@
+name: Beacon keeper sweep
+
+# Closes the free-look window (docs/THREAT_MODEL.md T2): the cancel timeout is
+# 1 hour, so fulfilling every pending drand request at least every ~15 minutes
+# guarantees no hand can be offchain-peeked and then refund-cancelled.
+# Requires the KEEPER_PRIVATE_KEY repository secret — a THROWAWAY testnet-only
+# key holding a little gas ETH; the sweep exits cleanly when it is unset.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: keeper
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Sweep pending beacons
+        run: pnpm --filter @blackjack/sdk keeper:sweep
+        env:
+          KEEPER_PRIVATE_KEY: ${{ secrets.KEEPER_PRIVATE_KEY }}

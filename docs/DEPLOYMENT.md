@@ -63,8 +63,13 @@ verification that did not happen.
 
 ## Post-deploy
 
-1. Start the keeper (`pnpm --filter @blackjack/sdk keeper`) **before**
-   announcing the table — fulfillment liveness is a documented assumption.
+1. Ensure beacon fulfillment liveness — a documented assumption. Either run
+   the continuous keeper (`pnpm --filter @blackjack/sdk keeper`) or rely on
+   the scheduled sweep (`.github/workflows/keeper.yml`: every 15 min, well
+   inside the 1 h cancel timeout). The sweep needs a `KEEPER_PRIVATE_KEY`
+   repository secret — a throwaway, testnet-only key holding a little gas
+   ETH; fulfillment is permissionless so the key needs no roles. One-shot
+   run: `KEEPER_PRIVATE_KEY=0x… pnpm --filter @blackjack/sdk keeper:sweep`.
 2. Sanity-play one full game (bet → deal → stand → settle) and check events
    on the explorer.
 3. Review role assignments: transfer `DEFAULT_ADMIN_ROLE` / `TREASURY_ROLE`
