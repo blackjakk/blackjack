@@ -144,19 +144,51 @@ export default function Page() {
     // silently: scoped to this table's contracts, capped per day, 24h expiry.
     const isMoss = liveConnector?.id === "mossWallet";
     const oneClickKey = `moss-oneclick:${address ?? ""}`;
-    const [oneClickExpiry, setOneClickExpiry] = useState(0);
+    const [oneClickGrant, setOneClickGrant] = useState<{expiry: number; targets: string[]} | null>(
+        null,
+    );
     useEffect(() => {
-        if (!isMoss || !address) return setOneClickExpiry(0);
-        setOneClickExpiry(Number(localStorage.getItem(oneClickKey) ?? 0));
+        if (!isMoss || !address) return setOneClickGrant(null);
+        const raw = localStorage.getItem(oneClickKey);
+        if (!raw) return setOneClickGrant(null);
+        try {
+            const p = JSON.parse(raw) as {expiry?: number; targets?: string[]};
+            if (p && typeof p.expiry === "number") {
+                return setOneClickGrant({
+                    expiry: p.expiry,
+                    targets: (p.targets ?? []).map((t) => t.toLowerCase()),
+                });
+            }
+        } catch {
+            /* old format: bare expiry number covering only the v1 contracts */
+        }
+        const n = Number(raw);
+        setOneClickGrant(
+            n > 0
+                ? {
+                      expiry: n,
+                      targets: [CHIP_ADDRESS, PROVIDER_ADDRESS, TABLE_ADDRESS].map((a) =>
+                          a.toLowerCase(),
+                      ),
+                  }
+                : null,
+        );
     }, [isMoss, address, oneClickKey]);
+    const oneClickExpiry = oneClickGrant?.expiry ?? 0;
     const oneClickActive = isMoss && oneClickExpiry > Date.now() / 1000 + 60;
+    const grantCovers = useCallback(
+        (target: string) =>
+            oneClickActive && (oneClickGrant?.targets.includes(target.toLowerCase()) ?? false),
+        [oneClickActive, oneClickGrant],
+    );
 
     const writeTx = useCallback(
         async (args: Parameters<typeof writeContractAsync>[0]) => {
-            if (oneClickActive && liveConnector) {
+            if (oneClickActive && liveConnector && grantCovers(args.address as string)) {
                 // Silent path: wallet_callContract with silent:true uses the session
                 // grant; if the grant expired, fall back to the normal approval UI.
-                return withMossRetry(async () => {
+                try {
+                return await withMossRetry(async () => {
                     const provider = (await liveConnector.getProvider()) as MossProvider;
                     const result = (await provider.request({
                         method: "wallet_callContract",
@@ -176,6 +208,13 @@ export default function Page() {
                     }
                     return result.receipt.transactionHash;
                 });
+                } catch (err) {
+                    // A silent call the wallet won't run (missing/changed permission,
+                    // policy edge) degrades to a normal approval popup instead of
+                    // surfacing a dead-end error. Explicit user cancels stay final.
+                    const m = err instanceof Error ? err.message : String(err);
+                    if (/cancel/i.test(m)) throw err;
+                }
             }
             const doWrite = () =>
                 writeContractAsync(
@@ -183,7 +222,7 @@ export default function Page() {
                 );
             return liveConnector?.id === "mossWallet" ? withMossRetry(doWrite) : doWrite();
         },
-        [writeContractAsync, liveConnector, oneClickActive],
+        [writeContractAsync, liveConnector, oneClickActive, grantCovers],
     );
     const wrongNetwork = isConnected && walletChainId !== activeChain.id;
     const {data: gasBalance} = useBalance({
@@ -423,8 +462,14 @@ export default function Page() {
                 ],
             })) as {status?: string};
             if (res?.status !== "approved") throw new Error("permission grant was not approved");
-            localStorage.setItem(oneClickKey, String(expiry));
-            setOneClickExpiry(expiry);
+            const targets = [
+                CHIP_ADDRESS,
+                PROVIDER_ADDRESS,
+                TABLE_ADDRESS,
+                ...V2_TABLES.map((t) => t.address),
+            ].map((a) => a.toLowerCase());
+            localStorage.setItem(oneClickKey, JSON.stringify({expiry, targets}));
+            setOneClickGrant({expiry, targets});
             return null;
         });
 
@@ -433,7 +478,7 @@ export default function Page() {
             const provider = (await liveConnector!.getProvider()) as MossProvider;
             await provider.request({method: "wallet_revokePermissions"});
             localStorage.removeItem(oneClickKey);
-            setOneClickExpiry(0);
+            setOneClickGrant(null);
             return null;
         });
 
@@ -724,7 +769,18 @@ export default function Page() {
 
             {isMoss && !wrongNetwork && (
                 <div className="panel row">
-                    {oneClickActive ? (
+                    {oneClickActive &&
+                    !grantCovers(tableChoice === "v1" ? TABLE_ADDRESS : tableChoice) ? (
+                        <>
+                            <span className="status">
+                                ⚡ 1-click play is on, but your approval predates this table.
+                                Re-approve once (passkey) to cover all current tables.
+                            </span>
+                            <button disabled={!!busy} onClick={onEnableOneClick}>
+                                {busy === "oneclick" ? "Check the wallet…" : "Re-approve 1-click"}
+                            </button>
+                        </>
+                    ) : oneClickActive ? (
                         <>
                             <span className="status">
                                 ⚡ <strong>1-click play is on</strong> — game moves go through without
@@ -758,7 +814,7 @@ export default function Page() {
                     name={V2_TABLES.find((t) => t.address === tableChoice)?.name ?? "Community table"}
                     address={address}
                     isConnected={isConnected && !wrongNetwork}
-                    oneClickActive={oneClickActive}
+                    oneClickActive={grantCovers(tableChoice as string)}
                     writeTx={(a) => writeTx(a as Parameters<typeof writeContractAsync>[0])}
                 />
             ) : (
