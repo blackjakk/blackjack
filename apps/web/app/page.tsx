@@ -55,7 +55,7 @@ function fmt(x: bigint | undefined): string {
 
 export default function Page() {
     const {address, isConnected, chainId: walletChainId} = useAccount();
-    const {connect, connectors} = useConnect();
+    const {connect, connectors, error: connectError, isPending: connecting, reset: resetConnect} = useConnect();
     const {disconnect} = useDisconnect();
     const {switchChain, isPending: switching} = useSwitchChain();
     const publicClient = usePublicClient();
@@ -65,6 +65,29 @@ export default function Page() {
         address,
         query: {refetchInterval: 5000, enabled: isConnected && !wrongNetwork},
     });
+
+    const [walletMenu, setWalletMenu] = useState(false);
+    useEffect(() => {
+        if (isConnected) setWalletMenu(false);
+    }, [isConnected]);
+
+    // MOSS is MegaETH's embedded wallet (hosted iframe + passkey) — no browser
+    // extension required. Extension wallets announce themselves via EIP-6963 and
+    // show up as extra connectors; the bare `injected` connector is only offered
+    // as a fallback when window.ethereum exists but nothing announced itself.
+    const mossConnector = connectors.find((c) => c.id === "mossWallet");
+    const discoveredWallets = connectors.filter(
+        (c) => c.type === "injected" && c.id !== "injected" && c.id !== "mossWallet",
+    );
+    const genericInjected = connectors.find((c) => c.id === "injected");
+    const hasWindowEthereum =
+        typeof window !== "undefined" && !!(window as {ethereum?: unknown}).ethereum;
+    const extensionWallets =
+        discoveredWallets.length > 0
+            ? discoveredWallets
+            : genericInjected && hasWindowEthereum
+              ? [genericInjected]
+              : [];
 
     const [wagerInput, setWagerInput] = useState("10");
     const [lastGameId, setLastGameId] = useState<bigint | null>(null);
@@ -283,11 +306,75 @@ export default function Page() {
                         <button className="secondary" onClick={() => disconnect()}>Disconnect</button>
                     </div>
                 ) : (
-                    <button onClick={() => connect({connector: connectors[0]!})}>
+                    <button onClick={() => {
+                        resetConnect();
+                        setWalletMenu(true);
+                    }}>
                         Connect wallet
                     </button>
                 )}
             </div>
+
+            {walletMenu && !isConnected && (
+                <div className="modal-backdrop" onClick={() => setWalletMenu(false)}>
+                    <div className="modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="row">
+                            <div className="hand-title">Connect a wallet</div>
+                            <button className="ghost" onClick={() => setWalletMenu(false)}>✕</button>
+                        </div>
+
+                        {mossConnector && (
+                            <button
+                                className="wallet-option"
+                                disabled={connecting}
+                                onClick={() => connect({connector: mossConnector})}
+                            >
+                                {mossConnector.icon && (
+                                    /* eslint-disable-next-line @next/next/no-img-element */
+                                    <img src={mossConnector.icon} alt="" />
+                                )}
+                                <span>
+                                    <strong>MOSS — MegaETH&apos;s wallet</strong>
+                                    <span className="sub">
+                                        Nothing to install · passkey sign-in · works on mobile
+                                    </span>
+                                </span>
+                            </button>
+                        )}
+
+                        {extensionWallets.map((c) => (
+                            <button
+                                key={c.uid}
+                                className="wallet-option"
+                                disabled={connecting}
+                                onClick={() => connect({connector: c})}
+                            >
+                                {c.icon && (
+                                    /* eslint-disable-next-line @next/next/no-img-element */
+                                    <img src={c.icon} alt="" />
+                                )}
+                                <span>
+                                    <strong>{c.id === "injected" ? "Browser wallet" : c.name}</strong>
+                                    <span className="sub">extension wallet</span>
+                                </span>
+                            </button>
+                        ))}
+
+                        {extensionWallets.length === 0 && (
+                            <div className="status">
+                                No browser-wallet extension detected — MOSS above works without
+                                one. To use MetaMask or another extension instead, install it and
+                                reload this page.
+                            </div>
+                        )}
+
+                        {connecting && <div className="status">Waiting for the wallet — check for a popup…</div>}
+                        {connectError && (
+                            <div className="error">{connectError.message.split("\n")[0]}</div>
+                        )}
+                    </div>
+                </div>
+            )}
 
             {wrongNetwork && (
                 <div className="panel row" style={{borderColor: "#7a5600"}}>

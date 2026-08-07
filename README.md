@@ -61,6 +61,19 @@ chain 6343); deploy block 26317836. House bankroll: 1,000,000 CHIP. Sanity-playe
 live via the SDK bot through real drand beacons. Testnet state may be rolled
 back by network upgrades — redeploy with `docs/DEPLOYMENT.md` if so.
 
+## Wallets
+
+The web app offers two ways to connect:
+
+* **MOSS** — MegaETH's official embedded wallet
+  ([docs](https://docs.megaeth.com/moss-docs)): passkey sign-in in a hosted
+  iframe, nothing to install, works on mobile. Integrated via the official
+  `@megaeth-labs/wallet-wagmi-connector`.
+* **Extension wallets** — MetaMask or any injected/EIP-6963 wallet.
+
+Connection errors are surfaced in the picker; if no extension is detected the
+UI says so instead of failing silently.
+
 ## Network (verified against docs.megaeth.com)
 
 | | Testnet |

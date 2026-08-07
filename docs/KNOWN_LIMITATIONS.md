@@ -38,3 +38,10 @@
 13. **Chat history loading grows with chain age.** The UI replays TableChat
     logs from the deploy block on each load (chunked getLogs); after months
     of activity an indexer would be needed.
+14. **MOSS is a hosted embedded wallet.** The MOSS connect option
+    (`@megaeth-labs/wallet-wagmi-connector`) embeds MegaETH's hosted wallet
+    (`account.megaeth.com`) in an iframe; keys are managed by that hosted
+    service and secured by passkeys, not by this app. Availability and
+    security of MOSS are MegaETH's, not ours — acceptable here because chips
+    are valueless play money. Extension wallets (EIP-6963/injected) remain
+    fully supported alternatives.
