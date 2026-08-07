@@ -16,7 +16,12 @@ const wagmiConfig = createConfig({
     chains: [activeChain],
     connectors:
         activeChain.id === megaethTestnet.id
-            ? [injected(), mossWallet({network: "testnet"})]
+            ? [
+                  injected(),
+                  // The hosted wallet app can take longer than the SDK's 10s
+                  // default handshake window to boot on a cold cache.
+                  mossWallet({network: "testnet", handshakeTimeoutMs: 30_000}),
+              ]
             : [injected()],
     transports: {[activeChain.id]: http()},
 });

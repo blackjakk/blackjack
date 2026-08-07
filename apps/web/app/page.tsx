@@ -53,6 +53,14 @@ function fmt(x: bigint | undefined): string {
     return x === undefined ? "…" : Number(formatEther(x)).toLocaleString();
 }
 
+/** Translate known wallet errors into something actionable. */
+function friendlyError(msg: string): string {
+    if (msg.includes("did not respond")) {
+        return "The MOSS wallet took too long to load (it can be slow on first visit). Wait a few seconds and try again.";
+    }
+    return msg;
+}
+
 export default function Page() {
     const {address, isConnected, chainId: walletChainId, connector: activeConnector} = useAccount();
     const {connect, connectors, error: connectError, isPending: connecting, reset: resetConnect} = useConnect();
@@ -258,7 +266,7 @@ export default function Page() {
                     await publicClient?.waitForTransactionReceipt({hash});
                 }
             } catch (err) {
-                setError(err instanceof Error ? err.message.split("\n")[0]! : String(err));
+                setError(friendlyError(err instanceof Error ? err.message.split("\n")[0]! : String(err)));
             } finally {
                 setBusy(null);
             }
@@ -419,7 +427,9 @@ export default function Page() {
 
                         {connecting && <div className="status">Waiting for the wallet — check for a popup…</div>}
                         {connectError && (
-                            <div className="error">{connectError.message.split("\n")[0]}</div>
+                            <div className="error">
+                                {friendlyError(connectError.message.split("\n")[0]!)}
+                            </div>
                         )}
                     </div>
                 </div>
