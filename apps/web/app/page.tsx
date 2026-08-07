@@ -54,12 +54,35 @@ function fmt(x: bigint | undefined): string {
 }
 
 export default function Page() {
-    const {address, isConnected, chainId: walletChainId} = useAccount();
+    const {address, isConnected, chainId: walletChainId, connector: activeConnector} = useAccount();
     const {connect, connectors, error: connectError, isPending: connecting, reset: resetConnect} = useConnect();
     const {disconnect} = useDisconnect();
     const {switchChain, isPending: switching} = useSwitchChain();
     const publicClient = usePublicClient();
     const {writeContractAsync} = useWriteContract();
+
+    // wagmi can rehydrate a persisted session into a connector "shell" without
+    // methods (seen with MOSS when its hosted iframe re-authorizes slowly after
+    // a reload); the first write then dies with "connector.getChainId is not a
+    // function". Always hand writes the live connector instance from the config,
+    // and drop the session if the stored connector no longer exists at all.
+    const liveConnector = useMemo(
+        () => connectors.find((c) => c.id === activeConnector?.id),
+        [connectors, activeConnector],
+    );
+    const connectorIsShell =
+        !!activeConnector &&
+        typeof (activeConnector as {getChainId?: unknown}).getChainId !== "function";
+    useEffect(() => {
+        if (isConnected && connectorIsShell && !liveConnector) disconnect();
+    }, [isConnected, connectorIsShell, liveConnector, disconnect]);
+    const writeTx = useCallback(
+        (args: Parameters<typeof writeContractAsync>[0]) =>
+            writeContractAsync(
+                liveConnector ? ({...args, connector: liveConnector} as typeof args) : args,
+            ),
+        [writeContractAsync, liveConnector],
+    );
     const wrongNetwork = isConnected && walletChainId !== activeChain.id;
     const {data: gasBalance} = useBalance({
         address,
@@ -77,7 +100,13 @@ export default function Page() {
     // as a fallback when window.ethereum exists but nothing announced itself.
     const mossConnector = connectors.find((c) => c.id === "mossWallet");
     const discoveredWallets = connectors.filter(
-        (c) => c.type === "injected" && c.id !== "injected" && c.id !== "mossWallet",
+        (c) =>
+            c.type === "injected" &&
+            c.id !== "injected" &&
+            c.id !== "mossWallet" &&
+            // MOSS also announces itself via EIP-6963 once its SDK boots; hide the
+            // duplicate so it doesn't show up twice under "extension wallets".
+            c.id !== "com.megaeth.account",
     );
     const genericInjected = connectors.find((c) => c.id === "injected");
     const hasWindowEthereum =
@@ -237,32 +266,32 @@ export default function Page() {
         [publicClient],
     );
 
-    const onFaucet = () => run("faucet", () => writeContractAsync({...chip, functionName: "faucet"}));
+    const onFaucet = () => run("faucet", () => writeTx({...chip, functionName: "faucet"}));
 
     const onBet = () =>
         run("bet", async () => {
             const wager = parseEther(wagerInput || "0");
             if ((allowance ?? 0n) < wager) {
-                const approveHash = await writeContractAsync({
+                const approveHash = await writeTx({
                     ...chip, functionName: "approve", args: [TABLE_ADDRESS, wager * 100n],
                 });
                 await publicClient?.waitForTransactionReceipt({hash: approveHash});
             }
-            return writeContractAsync({...table, functionName: "placeBet", args: [wager]});
+            return writeTx({...table, functionName: "placeBet", args: [wager]});
         });
 
-    const onHit = () => run("hit", () => writeContractAsync({...table, functionName: "hit"}));
-    const onStand = () => run("stand", () => writeContractAsync({...table, functionName: "stand"}));
+    const onHit = () => run("hit", () => writeTx({...table, functionName: "hit"}));
+    const onStand = () => run("stand", () => writeTx({...table, functionName: "stand"}));
     const onDouble = () =>
         run("double", async () => {
             const wager = game!.wager;
             if ((allowance ?? 0n) < wager) {
-                const approveHash = await writeContractAsync({
+                const approveHash = await writeTx({
                     ...chip, functionName: "approve", args: [TABLE_ADDRESS, wager * 100n],
                 });
                 await publicClient?.waitForTransactionReceipt({hash: approveHash});
             }
-            return writeContractAsync({...table, functionName: "double"});
+            return writeTx({...table, functionName: "double"});
         });
 
     /** Anyone may submit the public beacon; here the player's own wallet does it. */
@@ -272,7 +301,7 @@ export default function Page() {
             if (PROVIDER_KIND === "drand") {
                 if (!drandRound) return null;
                 const sig = await fetchBeaconSignature(BigInt(drandRound));
-                return writeContractAsync({
+                return writeTx({
                     address: PROVIDER_ADDRESS, abi: drandRandomnessProviderAbi,
                     functionName: "fulfill", args: [game.pendingRequestId, sig],
                 });
@@ -280,7 +309,7 @@ export default function Page() {
             // Local dev only: mock provider takes a caller-chosen seed.
             const bytes = crypto.getRandomValues(new Uint8Array(32));
             const seed = `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}` as `0x${string}`;
-            return writeContractAsync({
+            return writeTx({
                 address: PROVIDER_ADDRESS, abi: mockRandomnessProviderAbi,
                 functionName: "fulfill", args: [game.pendingRequestId, seed],
             });
@@ -288,7 +317,7 @@ export default function Page() {
 
     const onCancel = () =>
         run("cancel", () =>
-            writeContractAsync({...table, functionName: "cancelTimedOutGame", args: [viewGameId!]}),
+            writeTx({...table, functionName: "cancelTimedOutGame", args: [viewGameId!]}),
         );
 
     // ---------------------------------------------------------------- render
