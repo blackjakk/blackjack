@@ -417,11 +417,37 @@ export default function Page() {
     const onFaucet = () => run("faucet", () => writeTx({...chip, functionName: "faucet"}));
 
     /** One passkey approval; afterwards matching game calls skip the popup. */
+    /**
+     * One passkey approval; afterwards matching game calls skip the popup.
+     * Scoped to the chip + provider + the CURRENTLY SELECTED table only: the
+     * small per-table payload is the shape the wallet's approval sheet is known
+     * to render reliably (a 29-entry all-tables list has been seen to stall it),
+     * and coverage merges as the player approves more tables.
+     */
     const onEnableOneClick = () =>
         run("oneclick", async () => {
+            const v1 = tableChoice === "v1";
+            const target = (v1 ? TABLE_ADDRESS : tableChoice) as `0x${string}`;
             const provider = (await liveConnector!.getProvider()) as MossProvider;
             const expiry = Math.floor(Date.now() / 1000) + ONE_CLICK_HOURS * 3600;
-            const res = (await provider.request({
+            const tableCalls = v1
+                ? [
+                      {to: target, signature: "placeBet(uint256)"},
+                      {to: target, signature: "hit()"},
+                      {to: target, signature: "stand()"},
+                      {to: target, signature: "double()"},
+                      {to: target, signature: "cancelTimedOutGame(uint256)"},
+                  ]
+                : [
+                      {to: target, signature: "placeBet(uint256)"},
+                      {to: target, signature: "hit(uint256)"},
+                      {to: target, signature: "stand(uint256)"},
+                      {to: target, signature: "double(uint256)"},
+                      {to: target, signature: "surrender(uint256)"},
+                      {to: target, signature: "cancelTimedOutGame(uint256)"},
+                      {to: target, signature: "fundHouse(uint256)"},
+                  ];
+            const request = provider.request({
                 method: "wallet_grantPermissions",
                 params: [
                     {
@@ -431,22 +457,8 @@ export default function Page() {
                                 calls: [
                                     {to: CHIP_ADDRESS, signature: "faucet()"},
                                     {to: CHIP_ADDRESS, signature: "approve(address,uint256)"},
-                                    {to: TABLE_ADDRESS, signature: "placeBet(uint256)"},
-                                    {to: TABLE_ADDRESS, signature: "hit()"},
-                                    {to: TABLE_ADDRESS, signature: "stand()"},
-                                    {to: TABLE_ADDRESS, signature: "double()"},
-                                    {to: TABLE_ADDRESS, signature: "cancelTimedOutGame(uint256)"},
                                     {to: PROVIDER_ADDRESS, signature: "fulfill(uint256,bytes)"},
-                                    // v2 variant tables (multi-hand): explicit-gameId actions.
-                                    ...V2_TABLES.flatMap(({address: t}) => [
-                                        {to: t, signature: "placeBet(uint256)"},
-                                        {to: t, signature: "hit(uint256)"},
-                                        {to: t, signature: "stand(uint256)"},
-                                        {to: t, signature: "double(uint256)"},
-                                        {to: t, signature: "surrender(uint256)"},
-                                        {to: t, signature: "cancelTimedOutGame(uint256)"},
-                                        {to: t, signature: "fundHouse(uint256)"},
-                                    ]),
+                                    ...tableCalls,
                                 ],
                                 spend: [
                                     {
@@ -460,14 +472,28 @@ export default function Page() {
                         },
                     },
                 ],
-            })) as {status?: string};
+            });
+            const res = (await Promise.race([
+                request,
+                new Promise((_, reject) =>
+                    setTimeout(
+                        () =>
+                            reject(
+                                new Error(
+                                    "The wallet never showed its approval screen. Reload the page and try again — play works without 1-click too (normal popups).",
+                                ),
+                            ),
+                        60_000,
+                    ),
+                ),
+            ])) as {status?: string};
             if (res?.status !== "approved") throw new Error("permission grant was not approved");
-            const targets = [
-                CHIP_ADDRESS,
-                PROVIDER_ADDRESS,
-                TABLE_ADDRESS,
-                ...V2_TABLES.map((t) => t.address),
-            ].map((a) => a.toLowerCase());
+            const targets = Array.from(
+                new Set([
+                    ...(oneClickGrant?.targets ?? []),
+                    ...[CHIP_ADDRESS, PROVIDER_ADDRESS, target].map((a) => a.toLowerCase()),
+                ]),
+            );
             localStorage.setItem(oneClickKey, JSON.stringify({expiry, targets}));
             setOneClickGrant({expiry, targets});
             return null;
@@ -774,7 +800,7 @@ export default function Page() {
                         <>
                             <span className="status">
                                 ⚡ 1-click play is on, but your approval predates this table.
-                                Re-approve once (passkey) to cover all current tables.
+                                Approve once (passkey) to cover this table too.
                             </span>
                             <button disabled={!!busy} onClick={onEnableOneClick}>
                                 {busy === "oneclick" ? "Check the wallet…" : "Re-approve 1-click"}
@@ -795,7 +821,7 @@ export default function Page() {
                         <>
                             <span className="status">
                                 Tired of approving every move? <strong>1-click play</strong> asks for
-                                one passkey approval, then bets/hits/stands run silently. Scoped to
+                                one passkey approval, then bets/hits/stands run silently at this table. Scoped to
                                 this table only, {ONE_CLICK_CHIP_PER_DAY} CHIP/day cap,{" "}
                                 {ONE_CLICK_HOURS}h expiry, revocable anytime.
                             </span>
