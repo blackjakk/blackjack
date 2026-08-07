@@ -68,31 +68,60 @@ function fmt(x: bigint | undefined): string {
     return x === undefined ? "…" : Number(formatEther(x)).toLocaleString();
 }
 
+const MOSS_BOOT_FAILURE = /did not respond|Failed to establish a connection to the MegaETH wallet/i;
+
 /** Translate known wallet errors into something actionable. */
 function friendlyError(msg: string): string {
-    if (msg.includes("did not respond")) {
+    if (MOSS_BOOT_FAILURE.test(msg)) {
         const firefox = typeof navigator !== "undefined" && navigator.userAgent.includes("Firefox");
-        if (firefox) {
-            return (
-                "The MOSS wallet couldn't finish loading. In Firefox this is usually a stale " +
-                "wallet session: click the shield/lock icon in the address bar → clear cookies " +
-                "and site data for this site → reload and connect again (passkey sign-in). " +
-                "If it persists, try ETP \"Standard\" instead of \"Strict\", or use an extension wallet."
-            );
-        }
+        const clearPath = firefox
+            ? "click the shield icon in the address bar → Clear cookies and site data"
+            : "click the lock icon in the address bar → Cookies and site data → Delete data used by this site";
         return (
-            "The MOSS wallet couldn't finish loading. Try again in a few seconds; " +
-            "if it keeps happening, open account.megaeth.com in a new tab (make sure " +
-            "it loads and you're signed in), then retry here."
+            "The MOSS wallet failed to load (already retried automatically). This is " +
+            `usually a stale wallet session — ${clearPath}, then reload and reconnect ` +
+            "with your passkey (you'll need to re-enable 1-click play). Extension " +
+            "wallets like MetaMask keep working in the meantime."
         );
     }
     return msg;
 }
 
+/**
+ * MOSS boot failures are often transient (handshake timeout on a cold cache);
+ * the SDK fully resets on failure, so one delayed retry converts most of them
+ * into successes before the user ever sees an error.
+ */
+async function withMossRetry<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+        return await fn();
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!MOSS_BOOT_FAILURE.test(msg)) throw err;
+        await new Promise((r) => setTimeout(r, 2500));
+        return fn();
+    }
+}
+
 export default function Page() {
     const {address, isConnected, chainId: walletChainId, connector: activeConnector} = useAccount();
-    const {connect, connectors, error: connectError, isPending: connecting, reset: resetConnect} = useConnect();
+    const {connectAsync, connectors} = useConnect();
     const {disconnect} = useDisconnect();
+    const [pickerBusy, setPickerBusy] = useState(false);
+    const [pickerError, setPickerError] = useState<string | null>(null);
+    const clickWallet = async (connector: (typeof connectors)[number]) => {
+        setPickerBusy(true);
+        setPickerError(null);
+        try {
+            await withMossRetry(() => connectAsync({connector}));
+        } catch (err) {
+            setPickerError(
+                friendlyError(err instanceof Error ? err.message.split("\n")[0]! : String(err)),
+            );
+        } finally {
+            setPickerBusy(false);
+        }
+    };
     const {switchChain, isPending: switching} = useSwitchChain();
     const publicClient = usePublicClient();
     const {writeContractAsync} = useWriteContract();
@@ -130,28 +159,32 @@ export default function Page() {
             if (oneClickActive && liveConnector) {
                 // Silent path: wallet_callContract with silent:true uses the session
                 // grant; if the grant expired, fall back to the normal approval UI.
-                const provider = (await liveConnector.getProvider()) as MossProvider;
-                const result = (await provider.request({
-                    method: "wallet_callContract",
-                    params: [
-                        {
-                            address: args.address,
-                            abi: args.abi,
-                            functionName: args.functionName,
-                            args: args.args ?? [],
-                            silent: true,
-                            silentUIApproveFallback: true,
-                        },
-                    ],
-                })) as MossTxResult;
-                if (result.status !== "approved" || !result.receipt?.transactionHash) {
-                    throw new Error(result.error ?? `wallet ${result.status ?? "error"}`);
-                }
-                return result.receipt.transactionHash;
+                return withMossRetry(async () => {
+                    const provider = (await liveConnector.getProvider()) as MossProvider;
+                    const result = (await provider.request({
+                        method: "wallet_callContract",
+                        params: [
+                            {
+                                address: args.address,
+                                abi: args.abi,
+                                functionName: args.functionName,
+                                args: args.args ?? [],
+                                silent: true,
+                                silentUIApproveFallback: true,
+                            },
+                        ],
+                    })) as MossTxResult;
+                    if (result.status !== "approved" || !result.receipt?.transactionHash) {
+                        throw new Error(result.error ?? `wallet ${result.status ?? "error"}`);
+                    }
+                    return result.receipt.transactionHash;
+                });
             }
-            return writeContractAsync(
-                liveConnector ? ({...args, connector: liveConnector} as typeof args) : args,
-            );
+            const doWrite = () =>
+                writeContractAsync(
+                    liveConnector ? ({...args, connector: liveConnector} as typeof args) : args,
+                );
+            return liveConnector?.id === "mossWallet" ? withMossRetry(doWrite) : doWrite();
         },
         [writeContractAsync, liveConnector, oneClickActive],
     );
@@ -518,7 +551,7 @@ export default function Page() {
                     </div>
                 ) : (
                     <button onClick={() => {
-                        resetConnect();
+                        setPickerError(null);
                         setWalletMenu(true);
                         // Warm the MOSS iframe while the user reads the picker, so
                         // clicking MOSS doesn't race the whole wallet boot sequence.
@@ -548,8 +581,8 @@ export default function Page() {
                         {mossConnector && (
                             <button
                                 className="wallet-option"
-                                disabled={connecting}
-                                onClick={() => connect({connector: mossConnector})}
+                                disabled={pickerBusy}
+                                onClick={() => clickWallet(mossConnector)}
                             >
                                 {mossConnector.icon && (
                                     /* eslint-disable-next-line @next/next/no-img-element */
@@ -568,8 +601,8 @@ export default function Page() {
                             <button
                                 key={c.uid}
                                 className="wallet-option"
-                                disabled={connecting}
-                                onClick={() => connect({connector: c})}
+                                disabled={pickerBusy}
+                                onClick={() => clickWallet(c)}
                             >
                                 {c.icon && (
                                     /* eslint-disable-next-line @next/next/no-img-element */
@@ -590,12 +623,8 @@ export default function Page() {
                             </div>
                         )}
 
-                        {connecting && <div className="status">Waiting for the wallet — check for a popup…</div>}
-                        {connectError && (
-                            <div className="error">
-                                {friendlyError(connectError.message.split("\n")[0]!)}
-                            </div>
-                        )}
+                        {pickerBusy && <div className="status">Waiting for the wallet — check for a popup…</div>}
+                        {pickerError && <div className="error">{pickerError}</div>}
                     </div>
                 </div>
             )}
