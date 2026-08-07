@@ -107,10 +107,31 @@ library BlackjackLib {
         pure
         returns (uint256 newPacked, uint8 newCount)
     {
+        return dealerPlayRule(packed, count, seed, false);
+    }
+
+    /// @notice Rule-aware dealer draw decision: hit strictly below 17 always; on
+    ///         exactly 17, hit only when the 17 is soft and the table plays H17.
+    function dealerShouldDrawRule(uint256 packed, uint8 count, bool hitsSoft17)
+        internal
+        pure
+        returns (bool)
+    {
+        (uint8 total, bool soft) = handValue(packed, count);
+        if (total < DEALER_STAND_MIN) return true;
+        return hitsSoft17 && total == DEALER_STAND_MIN && soft;
+    }
+
+    /// @notice Rule-aware dealer playout (S17 when hitsSoft17 = false, H17 when true).
+    function dealerPlayRule(uint256 packed, uint8 count, bytes32 seed, bool hitsSoft17)
+        internal
+        pure
+        returns (uint256 newPacked, uint8 newCount)
+    {
         newPacked = packed;
         newCount = count;
         uint256 nonce;
-        while (dealerShouldDraw(newPacked, newCount)) {
+        while (dealerShouldDrawRule(newPacked, newCount, hitsSoft17)) {
             (newPacked, newCount) = pushCard(newPacked, newCount, drawCard(seed, nonce));
             unchecked {
                 ++nonce;
