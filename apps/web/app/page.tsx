@@ -30,6 +30,9 @@ import {
 } from "@blackjack/sdk";
 import {drandPublishTime} from "@blackjack/config";
 import {Chat} from "./chat.tsx";
+import {CardView, fmt} from "./ui.tsx";
+import {Lobby, type TableChoice} from "./lobby.tsx";
+import {V2Table} from "./v2table.tsx";
 import {
     TABLE_ADDRESS,
     CHIP_ADDRESS,
@@ -40,6 +43,8 @@ import {
     isConfigured,
     txUrl,
     BUILD_ID,
+    V2_TABLES,
+    hasV2,
 } from "../lib/config.ts";
 
 const POLL = {refetchInterval: 1500} as const;
@@ -58,15 +63,7 @@ type MossTxResult = {
     receipt?: {transactionHash: `0x${string}`};
 };
 
-function CardView({card, hidden}: {card?: Card; hidden?: boolean}) {
-    if (hidden || !card) return <div className="card back">?</div>;
-    const red = card.suit === 1 || card.suit === 2;
-    return <div className={`card${red ? " red" : ""}`}>{card.label}</div>;
-}
 
-function fmt(x: bigint | undefined): string {
-    return x === undefined ? "…" : Number(formatEther(x)).toLocaleString();
-}
 
 const MOSS_BOOT_FAILURE = /did not respond|Failed to establish a connection to the MegaETH wallet/i;
 
@@ -241,6 +238,10 @@ export default function Page() {
         setTimeout(() => setCopied(false), 1500);
     }, [address]);
 
+    const [tableChoice, setTableChoice] = useState<TableChoice>(
+        hasV2 && V2_TABLES.length > 0 ? V2_TABLES[0]!.address : "v1",
+    );
+
     const [wagerInput, setWagerInput] = useState("10");
     const [lastGameId, setLastGameId] = useState<bigint | null>(null);
     const [lastTx, setLastTx] = useState<string | null>(null);
@@ -397,6 +398,16 @@ export default function Page() {
                                     {to: TABLE_ADDRESS, signature: "double()"},
                                     {to: TABLE_ADDRESS, signature: "cancelTimedOutGame(uint256)"},
                                     {to: PROVIDER_ADDRESS, signature: "fulfill(uint256,bytes)"},
+                                    // v2 variant tables (multi-hand): explicit-gameId actions.
+                                    ...V2_TABLES.flatMap(({address: t}) => [
+                                        {to: t, signature: "placeBet(uint256)"},
+                                        {to: t, signature: "hit(uint256)"},
+                                        {to: t, signature: "stand(uint256)"},
+                                        {to: t, signature: "double(uint256)"},
+                                        {to: t, signature: "surrender(uint256)"},
+                                        {to: t, signature: "cancelTimedOutGame(uint256)"},
+                                        {to: t, signature: "fundHouse(uint256)"},
+                                    ]),
                                 ],
                                 spend: [
                                     {
@@ -674,6 +685,9 @@ export default function Page() {
                 </div>
             )}
 
+            <Lobby selected={tableChoice} onSelect={setTableChoice} />
+
+            {tableChoice === "v1" && (
             <div className="panel stats">
                 <div className="stat">
                     <div className="label">Your CHIP balance</div>
@@ -696,6 +710,8 @@ export default function Page() {
                     <div className="value">{paused ? "⏸ paused" : "open"}</div>
                 </div>
             </div>
+
+            )}
 
             {isConnected && (
                 <div className="panel row">
@@ -735,6 +751,18 @@ export default function Page() {
                 </div>
             )}
 
+            {tableChoice !== "v1" && address !== undefined || tableChoice !== "v1" ? (
+                <V2Table
+                    key={tableChoice}
+                    table={tableChoice as `0x${string}`}
+                    name={V2_TABLES.find((t) => t.address === tableChoice)?.name ?? "Community table"}
+                    address={address}
+                    isConnected={isConnected && !wrongNetwork}
+                    oneClickActive={oneClickActive}
+                    writeTx={(a) => writeTx(a as Parameters<typeof writeContractAsync>[0])}
+                />
+            ) : (
+            <>
             <div className="panel">
                 <div className="hand-title">
                     Dealer {dealerCards.length > 0 && `— ${dealerVal.total}${dealerVal.soft ? " (soft)" : ""}`}
@@ -862,6 +890,8 @@ export default function Page() {
                         ))}
                     </div>
                 </div>
+            )}
+            </>
             )}
 
             <Chat />

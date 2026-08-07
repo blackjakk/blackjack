@@ -42,6 +42,8 @@ export const Outcome = {
     PLAYER_BUST: 5,
     DEALER_BLACKJACK: 6,
     CANCELLED_REFUND: 7,
+    /** v2 tables only (late surrender). */
+    SURRENDERED: 8,
 } as const;
 export type Outcome = (typeof Outcome)[keyof typeof Outcome];
 export const OutcomeNames = [
@@ -53,6 +55,7 @@ export const OutcomeNames = [
     "PLAYER_BUST",
     "DEALER_BLACKJACK",
     "CANCELLED_REFUND",
+    "SURRENDERED",
 ] as const;
 
 export const AWAITING_STATES = new Set<GameState>([

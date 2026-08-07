@@ -47,3 +47,15 @@ export function txUrl(hash: string): string {
 
 /** Short commit id baked in at build time, for verifying which deploy is live. */
 export const BUILD_ID = (process.env.NEXT_PUBLIC_BUILD_ID ?? "dev").slice(0, 7);
+
+// ---------------------------------------------------------------- v2 (Phase A)
+
+/** Permissionless TableFactory (v2 variant tables). Empty when not deployed. */
+export const FACTORY_ADDRESS = (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ??
+    live?.factory ??
+    "") as Address;
+
+/** Curated launch tables with display names; community tables come from the registry. */
+export const V2_TABLES: {name: string; address: Address}[] = live?.v2Tables ?? [];
+
+export const hasV2 = (FACTORY_ADDRESS as string).length === 42;

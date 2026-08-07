@@ -1,0 +1,462 @@
+"use client";
+
+import {useCallback, useEffect, useMemo, useRef, useState} from "react";
+import {usePublicClient, useReadContract, useReadContracts} from "wagmi";
+import type {Address} from "viem";
+import {parseEther} from "viem";
+import {blackjackTableV2Abi, testChipAbi, drandRandomnessProviderAbi} from "@blackjack/config";
+import {drandPublishTime} from "@blackjack/config";
+import {
+    unpackCards,
+    handValue,
+    GameState,
+    Outcome,
+    OutcomeNames,
+    fetchBeaconSignature,
+} from "@blackjack/sdk";
+import {CHIP_ADDRESS, PROVIDER_ADDRESS, txUrl} from "../lib/config.ts";
+import {CardView, fmt} from "./ui.tsx";
+import {rulesSummary} from "./lobby.tsx";
+
+const POLL = {refetchInterval: 1500} as const;
+
+type WriteTx = (args: {
+    address: Address;
+    abi: unknown;
+    functionName: string;
+    args?: readonly unknown[];
+}) => Promise<`0x${string}`>;
+
+type V2Game = {
+    player: Address;
+    requestTimestamp: bigint;
+    state: number;
+    outcome: number;
+    doubled: boolean;
+    playerCount: number;
+    dealerCount: number;
+    wager: bigint;
+    reservedLiability: bigint;
+    payout: bigint;
+    playerCards: bigint;
+    dealerCards: bigint;
+    pendingRequestId: bigint;
+    pendingProvider: Address;
+};
+
+type Rules = {
+    dealerHitsSoft17: boolean;
+    blackjackNum: number;
+    blackjackDen: number;
+    doubleRule: number;
+    lateSurrender: boolean;
+};
+
+/** Multi-hand play view for one BlackjackTableV2. */
+export function V2Table({
+    table,
+    name,
+    address,
+    isConnected,
+    oneClickActive,
+    writeTx,
+}: {
+    table: Address;
+    name: string;
+    address: Address | undefined;
+    isConnected: boolean;
+    oneClickActive: boolean;
+    writeTx: WriteTx;
+}) {
+    const publicClient = usePublicClient();
+    const tbl = {address: table, abi: blackjackTableV2Abi} as const;
+    const chip = {address: CHIP_ADDRESS, abi: testChipAbi} as const;
+    const zero = "0x0000000000000000000000000000000000000000" as const;
+
+    const {data: rules} = useReadContract({...tbl, functionName: "rules"});
+    const {data: liquidity} = useReadContract({...tbl, functionName: "liquidity", query: POLL});
+    const {data: minWager} = useReadContract({...tbl, functionName: "minWager", query: POLL});
+    const {data: maxWager} = useReadContract({...tbl, functionName: "maxWager", query: POLL});
+    const {data: paused} = useReadContract({...tbl, functionName: "paused", query: POLL});
+    const {data: maxConcurrent} = useReadContract({...tbl, functionName: "maxConcurrentGames"});
+    const {data: allowance} = useReadContract({
+        ...chip,
+        functionName: "allowance",
+        args: [address ?? zero, table],
+        query: {...POLL, enabled: isConnected},
+    });
+    const {data: activeIds} = useReadContract({
+        ...tbl,
+        functionName: "activeGamesOf",
+        args: [address ?? zero],
+        query: {...POLL, enabled: isConnected},
+    });
+
+    // Keep recently finished hands on screen after they leave the active set.
+    const [finished, setFinished] = useState<bigint[]>([]);
+    const prevActive = useRef<bigint[]>([]);
+    useEffect(() => {
+        const now = (activeIds as readonly bigint[] | undefined) ?? [];
+        const gone = prevActive.current.filter((id) => !now.includes(id));
+        if (gone.length > 0) {
+            setFinished((f) => [...gone, ...f.filter((id) => !gone.includes(id))].slice(0, 4));
+        }
+        prevActive.current = [...now];
+    }, [activeIds]);
+
+    const shownIds = useMemo(() => {
+        const active = ((activeIds as readonly bigint[] | undefined) ?? []).slice().sort((a, b) =>
+            a < b ? -1 : 1,
+        );
+        return [...active, ...finished.filter((id) => !active.includes(id))];
+    }, [activeIds, finished]);
+
+    const {data: gamesData} = useReadContracts({
+        contracts: shownIds.map((id) => ({...tbl, functionName: "getGame", args: [id]}) as const),
+        query: {...POLL, enabled: shownIds.length > 0},
+    });
+
+    // Per-pending-request drand round info (for countdowns + auto-reveal).
+    const awaitingGames = useMemo(() => {
+        const out: {id: bigint; g: V2Game}[] = [];
+        shownIds.forEach((id, i) => {
+            const g = gamesData?.[i]?.result as V2Game | undefined;
+            if (g && g.pendingRequestId !== 0n) out.push({id, g});
+        });
+        return out;
+    }, [shownIds, gamesData]);
+
+    const [rounds, setRounds] = useState<Record<string, bigint>>({});
+    useEffect(() => {
+        if (!publicClient || awaitingGames.length === 0) return;
+        let stop = false;
+        (async () => {
+            const next: Record<string, bigint> = {};
+            for (const {g} of awaitingGames) {
+                try {
+                    const req = (await publicClient.readContract({
+                        address: PROVIDER_ADDRESS,
+                        abi: drandRandomnessProviderAbi,
+                        functionName: "requests",
+                        args: [g.pendingRequestId],
+                    })) as readonly unknown[];
+                    next[g.pendingRequestId.toString()] = BigInt(req[1] as bigint);
+                } catch {
+                    /* transient RPC error — retried on the next poll */
+                }
+            }
+            if (!stop) setRounds((r) => ({...r, ...next}));
+        })();
+        return () => {
+            stop = true;
+        };
+    }, [publicClient, awaitingGames]);
+
+    const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+    useEffect(() => {
+        const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+        return () => clearInterval(t);
+    }, []);
+
+    // ------------------------------------------------------------ actions
+
+    const [busy, setBusy] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [lastTx, setLastTx] = useState<string | null>(null);
+
+    const run = useCallback(
+        async (label: string, fn: () => Promise<`0x${string}` | null>, ignore?: RegExp) => {
+            setBusy(label);
+            setError(null);
+            try {
+                const hash = await fn();
+                if (hash) {
+                    setLastTx(hash);
+                    await publicClient?.waitForTransactionReceipt({hash});
+                }
+            } catch (err) {
+                const full = err instanceof Error ? err.message : String(err);
+                if (!ignore?.test(full)) setError(full.split("\n")[0]!);
+            } finally {
+                setBusy(null);
+            }
+        },
+        [publicClient],
+    );
+
+    const [wagerInput, setWagerInput] = useState("10");
+    const onBet = () =>
+        run("bet", async () => {
+            const wager = parseEther(wagerInput || "0");
+            if ((allowance ?? 0n) < wager) {
+                const h = await writeTx({
+                    ...chip,
+                    functionName: "approve",
+                    args: [table, wager * (oneClickActive ? 1n : 100n)],
+                });
+                await publicClient?.waitForTransactionReceipt({hash: h});
+            }
+            return writeTx({...tbl, functionName: "placeBet", args: [wager]});
+        });
+
+    const onAct = (fn: "hit" | "stand" | "surrender", id: bigint) =>
+        run(`${fn}:${id}`, () => writeTx({...tbl, functionName: fn, args: [id]}));
+
+    const onDouble = (id: bigint, wager: bigint) =>
+        run(`double:${id}`, async () => {
+            if ((allowance ?? 0n) < wager) {
+                const h = await writeTx({
+                    ...chip,
+                    functionName: "approve",
+                    args: [table, wager * (oneClickActive ? 1n : 100n)],
+                });
+                await publicClient?.waitForTransactionReceipt({hash: h});
+            }
+            return writeTx({...tbl, functionName: "double", args: [id]});
+        });
+
+    const onBeacon = (g: V2Game) =>
+        run(
+            `beacon:${g.pendingRequestId}`,
+            async () => {
+                const round = rounds[g.pendingRequestId.toString()];
+                if (!round) return null;
+                const sig = await fetchBeaconSignature(round);
+                return writeTx({
+                    address: PROVIDER_ADDRESS,
+                    abi: drandRandomnessProviderAbi,
+                    functionName: "fulfill",
+                    args: [g.pendingRequestId, sig],
+                });
+            },
+            /AlreadyFulfilled/i,
+        );
+
+    const [fundInput, setFundInput] = useState("");
+    const onFund = () =>
+        run("fund", async () => {
+            const amount = parseEther(fundInput || "0");
+            if (amount === 0n) return null;
+            if ((allowance ?? 0n) < amount) {
+                const h = await writeTx({
+                    ...chip,
+                    functionName: "approve",
+                    args: [table, amount],
+                });
+                await publicClient?.waitForTransactionReceipt({hash: h});
+            }
+            setFundInput("");
+            return writeTx({...tbl, functionName: "fundHouse", args: [amount]});
+        });
+
+    // Auto-reveal: one attempt per request id, as soon as its round publishes.
+    const autoTried = useRef<Set<string>>(new Set());
+    useEffect(() => {
+        if (busy) return;
+        for (const {g} of awaitingGames) {
+            const key = g.pendingRequestId.toString();
+            const round = rounds[key];
+            if (!round || autoTried.current.has(key)) continue;
+            if (BigInt(now) < drandPublishTime(round)) continue;
+            autoTried.current.add(key);
+            void onBeacon(g);
+            break; // one at a time; the next poll picks up the rest
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [awaitingGames, rounds, now, busy]);
+
+    // ------------------------------------------------------------ render
+
+    const r = rules as Rules | undefined;
+    const activeCount = ((activeIds as readonly bigint[] | undefined) ?? []).length;
+    const canAddHand =
+        isConnected && !paused && maxConcurrent !== undefined && activeCount < Number(maxConcurrent);
+
+    const doubleAllowedFor = (g: V2Game): boolean => {
+        if (!r || g.playerCount !== 2 || g.doubled) return false;
+        if (r.doubleRule === 3) return false;
+        if (r.doubleRule === 0) return true;
+        const cards = unpackCards(g.playerCards, g.playerCount);
+        const hv = handValue(cards);
+        if (hv.soft) return false;
+        return r.doubleRule === 1 ? hv.total >= 9 && hv.total <= 11 : hv.total >= 10 && hv.total <= 11;
+    };
+
+    return (
+        <>
+            <div className="panel">
+                <div className="row">
+                    <div>
+                        <div className="hand-title">{name}</div>
+                        <div className="status">{r ? rulesSummary(r) : "…"}</div>
+                    </div>
+                    <div className="status">
+                        bets {fmt(minWager)}–{fmt(maxWager)} · bankroll {fmt(liquidity?.[0])} ·
+                        available {fmt(liquidity?.[2])} {paused ? " · ⏸ paused" : ""}
+                    </div>
+                </div>
+                {isConnected && (
+                    <div className="row" style={{marginTop: 10}}>
+                        <span className="status">
+                            Anyone can add bankroll to this table (donation until LP shares exist):
+                        </span>
+                        <span className="row" style={{gap: 6}}>
+                            <input
+                                value={fundInput}
+                                onChange={(e) => setFundInput(e.target.value)}
+                                inputMode="decimal"
+                                placeholder="CHIP"
+                                style={{width: 90}}
+                                aria-label="liquidity amount in CHIP"
+                            />
+                            <button className="secondary" disabled={!!busy} onClick={onFund}>
+                                {busy === "fund" ? "…" : "Add liquidity"}
+                            </button>
+                        </span>
+                    </div>
+                )}
+            </div>
+
+            {shownIds.length === 0 && (
+                <div className="panel status">
+                    No hands yet — place a bet to be dealt in. You can play up to{" "}
+                    {maxConcurrent?.toString() ?? "…"} hands at once here.
+                </div>
+            )}
+
+            {shownIds.map((id, i) => {
+                const g = gamesData?.[i]?.result as V2Game | undefined;
+                if (!g) return null;
+                const playerCards = unpackCards(g.playerCards, g.playerCount);
+                const dealerCards = unpackCards(g.dealerCards, g.dealerCount);
+                const pv = handValue(playerCards);
+                const dv = handValue(dealerCards);
+                const isOver = g.state === GameState.SETTLED || g.state === GameState.CANCELLED;
+                const isTurn = g.state === GameState.PLAYER_TURN;
+                const awaiting = g.pendingRequestId !== 0n;
+                const round = rounds[g.pendingRequestId.toString()];
+                const ready = round !== undefined && BigInt(now) >= drandPublishTime(round);
+                const outcomeClass =
+                    g.outcome === Outcome.PLAYER_BLACKJACK || g.outcome === Outcome.PLAYER_WIN
+                        ? "win"
+                        : g.outcome === Outcome.PUSH || g.outcome === Outcome.CANCELLED_REFUND
+                          ? "push"
+                          : "lose";
+
+                return (
+                    <div className="panel" key={id.toString()}>
+                        <div className="row">
+                            <div className="hand-title">
+                                Hand #{id.toString()} · wager{" "}
+                                {fmt(g.doubled ? g.wager * 2n : g.wager)} CHIP
+                                {g.doubled ? " (doubled)" : ""}
+                            </div>
+                        </div>
+                        <div className="hand-title" style={{marginTop: 8}}>
+                            Dealer{" "}
+                            {dealerCards.length > 0 && `— ${dv.total}${dv.soft ? " (soft)" : ""}`}
+                        </div>
+                        <div className="cards">
+                            {dealerCards.map((c, j) => (
+                                <CardView key={j} card={c} />
+                            ))}
+                            {!isOver && dealerCards.length === 1 && <CardView hidden />}
+                            {dealerCards.length === 0 && <span className="status">no cards yet</span>}
+                        </div>
+                        <div className="hand-title" style={{marginTop: 8}}>
+                            You {playerCards.length > 0 && `— ${pv.total}${pv.soft ? " (soft)" : ""}`}
+                        </div>
+                        <div className="cards">
+                            {playerCards.map((c, j) => (
+                                <CardView key={j} card={c} />
+                            ))}
+                            {playerCards.length === 0 && <span className="status">dealing…</span>}
+                        </div>
+
+                        <div className="row" style={{marginTop: 10}}>
+                            {isTurn && (
+                                <div className="row" style={{gap: 8}}>
+                                    <button disabled={!!busy} onClick={() => onAct("hit", id)}>
+                                        {busy === `hit:${id}` ? "…" : "Hit"}
+                                    </button>
+                                    <button disabled={!!busy} onClick={() => onAct("stand", id)}>
+                                        {busy === `stand:${id}` ? "…" : "Stand"}
+                                    </button>
+                                    {doubleAllowedFor(g) && (
+                                        <button
+                                            disabled={!!busy || paused === true}
+                                            onClick={() => onDouble(id, g.wager)}
+                                        >
+                                            {busy === `double:${id}` ? "…" : "Double"}
+                                        </button>
+                                    )}
+                                    {r?.lateSurrender && g.playerCount === 2 && !g.doubled && (
+                                        <button
+                                            className="secondary"
+                                            disabled={!!busy}
+                                            onClick={() => onAct("surrender", id)}
+                                        >
+                                            {busy === `surrender:${id}` ? "…" : "Surrender"}
+                                        </button>
+                                    )}
+                                </div>
+                            )}
+                            {awaiting && (
+                                <span className="status">
+                                    🎲{" "}
+                                    {ready
+                                        ? "beacon published — revealing…"
+                                        : round
+                                          ? `cards locked to drand round ${round} — ~${Math.max(0, Number(drandPublishTime(round)) - now)}s`
+                                          : "committing to a future drand round…"}
+                                </span>
+                            )}
+                            {awaiting && ready && error && (
+                                <button className="pulse" disabled={!!busy} onClick={() => onBeacon(g)}>
+                                    Submit beacon
+                                </button>
+                            )}
+                        </div>
+
+                        {isOver && (
+                            <div className={`result ${outcomeClass}`} style={{marginTop: 10}}>
+                                {(OutcomeNames[g.outcome] ?? "?").replaceAll("_", " ")}
+                                {g.payout > 0n ? ` — paid ${fmt(g.payout)} CHIP` : ""}
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+
+            {canAddHand && (
+                <div className="panel row">
+                    <span className="status">
+                        {activeCount === 0 ? "Place a bet:" : `Add another hand (${activeCount}/${maxConcurrent?.toString()}):`}
+                    </span>
+                    <span className="row" style={{gap: 8}}>
+                        <input
+                            value={wagerInput}
+                            onChange={(e) => setWagerInput(e.target.value)}
+                            inputMode="decimal"
+                            aria-label="wager in CHIP"
+                            style={{width: 90}}
+                        />
+                        <button disabled={!!busy} onClick={onBet}>
+                            {busy === "bet" ? "Placing…" : "Place bet"}
+                        </button>
+                    </span>
+                </div>
+            )}
+
+            {lastTx && (
+                <div className="status">
+                    last tx:{" "}
+                    <a href={txUrl(lastTx)} target="_blank" rel="noreferrer">
+                        {lastTx.slice(0, 10)}…{lastTx.slice(-8)}
+                    </a>
+                </div>
+            )}
+            {error && <div className="error">{error}</div>}
+        </>
+    );
+}

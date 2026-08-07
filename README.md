@@ -61,6 +61,16 @@ chain 6343); deploy block 26317836. House bankroll: 1,000,000 CHIP. Sanity-playe
 live via the SDK bot through real drand beacons. Testnet state may be rolled
 back by network upgrades — redeploy with `docs/DEPLOYMENT.md` if so.
 
+## Tables (Phase A)
+
+The web app opens on a **table lobby**: three curated variant tables (Classic
+S17 3:2 · Vegas H17 6:5 with surrender · Pro with double-9-11 and surrender)
+plus any community tables created through the permissionless onchain
+`TableFactory`. v2 tables support **multiple concurrent hands** per player
+(up to 5), per-table rules enforced onchain, and **permissionless bankroll
+deposits** (`fundHouse`) — LP shares are on the roadmap. The original v1
+single-hand table remains available.
+
 ## Wallets
 
 The web app offers two ways to connect:
