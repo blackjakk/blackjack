@@ -20,12 +20,14 @@ import {rulesSummary} from "./lobby.tsx";
 
 const POLL = {refetchInterval: 1500} as const;
 
-type WriteTx = (args: {
+type Call = {
     address: Address;
     abi: unknown;
     functionName: string;
     args?: readonly unknown[];
-}) => Promise<`0x${string}`>;
+};
+type WriteTx = (args: Call) => Promise<`0x${string}`>;
+type WriteBatch = (calls: Call[]) => Promise<`0x${string}`>;
 
 type V2Game = {
     player: Address;
@@ -59,14 +61,18 @@ export function V2Table({
     address,
     isConnected,
     oneClickActive,
+    isMoss,
     writeTx,
+    writeBatch,
 }: {
     table: Address;
     name: string;
     address: Address | undefined;
     isConnected: boolean;
     oneClickActive: boolean;
+    isMoss: boolean;
     writeTx: WriteTx;
+    writeBatch: WriteBatch;
 }) {
     const publicClient = usePublicClient();
     const tbl = {address: table, abi: blackjackTableV2Abi} as const;
@@ -185,35 +191,44 @@ export function V2Table({
     );
 
     const [wagerInput, setWagerInput] = useState("10");
+    /** Fresh allowance read: the polled hook can be stale, and MOSS auto-revokes
+     *  standalone approvals — bundling approve+action into one atomic batch is
+     *  the only reliable shape there. */
+    const callsWithAllowance = async (wager: bigint, action: Call): Promise<Call[]> => {
+        const live = (await publicClient!.readContract({
+            ...chip,
+            functionName: "allowance",
+            args: [address!, table],
+        })) as bigint;
+        const calls: Call[] = [];
+        if (live < wager) {
+            calls.push({
+                ...chip,
+                functionName: "approve",
+                args: [table, wager * (isMoss ? 1n : 100n)],
+            });
+        }
+        calls.push(action);
+        return calls;
+    };
+
     const onBet = () =>
         run("bet", async () => {
             const wager = parseEther(wagerInput || "0");
-            if ((allowance ?? 0n) < wager) {
-                const h = await writeTx({
-                    ...chip,
-                    functionName: "approve",
-                    args: [table, wager * (oneClickActive ? 1n : 100n)],
-                });
-                await publicClient?.waitForTransactionReceipt({hash: h});
-            }
-            return writeTx({...tbl, functionName: "placeBet", args: [wager]});
+            return writeBatch(
+                await callsWithAllowance(wager, {...tbl, functionName: "placeBet", args: [wager]}),
+            );
         });
 
     const onAct = (fn: "hit" | "stand" | "surrender", id: bigint) =>
         run(`${fn}:${id}`, () => writeTx({...tbl, functionName: fn, args: [id]}));
 
     const onDouble = (id: bigint, wager: bigint) =>
-        run(`double:${id}`, async () => {
-            if ((allowance ?? 0n) < wager) {
-                const h = await writeTx({
-                    ...chip,
-                    functionName: "approve",
-                    args: [table, wager * (oneClickActive ? 1n : 100n)],
-                });
-                await publicClient?.waitForTransactionReceipt({hash: h});
-            }
-            return writeTx({...tbl, functionName: "double", args: [id]});
-        });
+        run(`double:${id}`, async () =>
+            writeBatch(
+                await callsWithAllowance(wager, {...tbl, functionName: "double", args: [id]}),
+            ),
+        );
 
     const onBeacon = (g: V2Game) =>
         run(
@@ -237,16 +252,10 @@ export function V2Table({
         run("fund", async () => {
             const amount = parseEther(fundInput || "0");
             if (amount === 0n) return null;
-            if ((allowance ?? 0n) < amount) {
-                const h = await writeTx({
-                    ...chip,
-                    functionName: "approve",
-                    args: [table, amount],
-                });
-                await publicClient?.waitForTransactionReceipt({hash: h});
-            }
             setFundInput("");
-            return writeTx({...tbl, functionName: "fundHouse", args: [amount]});
+            return writeBatch(
+                await callsWithAllowance(amount, {...tbl, functionName: "fundHouse", args: [amount]}),
+            );
         });
 
     // Auto-reveal: one attempt per request id, as soon as its round publishes.

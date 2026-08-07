@@ -69,6 +69,13 @@ const MOSS_BOOT_FAILURE = /did not respond|Failed to establish a connection to t
 
 /** Translate known wallet errors into something actionable. */
 function friendlyError(msg: string): string {
+    if (msg.includes("0xfb8f41b2")) {
+        return (
+            "The table wasn't approved to take the chips (the wallet auto-revokes " +
+            "standalone approvals). Just retry — approval and bet now go through " +
+            "together in one step."
+        );
+    }
     if (MOSS_BOOT_FAILURE.test(msg)) {
         const firefox = typeof navigator !== "undefined" && navigator.userAgent.includes("Firefox");
         const clearPath = firefox
@@ -257,6 +264,69 @@ export default function Page() {
         },
         [writeContractAsync, liveConnector, oneClickActive, grantCovers, refreshGrant],
     );
+
+    /**
+     * Execute several calls as ONE atomic MOSS batch (single approval sheet, no
+     * gap between approve and spend — the wallet auto-revokes dangling ERC-20
+     * approvals, so approve-then-call as two txs loses the allowance before the
+     * second call runs). Non-MOSS wallets execute sequentially.
+     */
+    const writeBatch = useCallback(
+        async (
+            calls: {
+                address: `0x${string}`;
+                abi: unknown;
+                functionName: string;
+                args?: readonly unknown[];
+            }[],
+        ): Promise<`0x${string}`> => {
+            if (calls.length === 1 && !isMoss) {
+                return writeTx(calls[0] as Parameters<typeof writeContractAsync>[0]);
+            }
+            if (isMoss && liveConnector) {
+                const canSilent = oneClickActive && calls.every((c) => grantCovers(c.address));
+                const send = async (silent: boolean) => {
+                    const provider = (await liveConnector.getProvider()) as MossProvider;
+                    const result = (await provider.request({
+                        method: "wallet_callContract",
+                        params: [
+                            calls.map((c) => ({
+                                address: c.address,
+                                abi: c.abi,
+                                functionName: c.functionName,
+                                args: c.args ?? [],
+                                ...(silent ? {silent: true, silentUIApproveFallback: true} : {}),
+                            })),
+                        ],
+                    })) as MossTxResult & {receipts?: {transactionHash: `0x${string}`}[]};
+                    if (result.status !== "approved") {
+                        throw new Error(result.error ?? `wallet ${result.status ?? "error"}`);
+                    }
+                    const hash =
+                        result.receipts?.[result.receipts.length - 1]?.transactionHash ??
+                        result.receipt?.transactionHash;
+                    if (!hash) throw new Error("wallet returned no transaction receipt");
+                    return hash;
+                };
+                try {
+                    return await withMossRetry(() => send(canSilent));
+                } catch (err) {
+                    const m = err instanceof Error ? err.message : String(err);
+                    if (/cancel/i.test(m)) throw err;
+                    if (!canSilent) throw err;
+                    void refreshGrant();
+                    return send(false);
+                }
+            }
+            let last!: `0x${string}`;
+            for (const c of calls) {
+                last = await writeTx(c as Parameters<typeof writeContractAsync>[0]);
+                await publicClient?.waitForTransactionReceipt({hash: last});
+            }
+            return last;
+        },
+        [isMoss, liveConnector, oneClickActive, grantCovers, refreshGrant, writeTx, publicClient],
+    );
     const wrongNetwork = isConnected && walletChainId !== activeChain.id;
     const {data: gasBalance} = useBalance({
         address,
@@ -436,9 +506,14 @@ export default function Page() {
                     await publicClient?.waitForTransactionReceipt({hash});
                 }
             } catch (err) {
+                console.error("[blackjack] action failed:", err);
                 const full = err instanceof Error ? err.message : String(err);
                 if (!ignore?.test(full)) {
-                    setError(friendlyError(full.split("\n")[0]!));
+                    const firstLine = full.split("\n")[0]!;
+                    // Wallet errors often bury the useful part past line 1.
+                    const detail =
+                        firstLine.length < 40 ? full.replaceAll("\n", " · ").slice(0, 300) : firstLine;
+                    setError(friendlyError(detail));
                 }
             } finally {
                 setBusy(null);
@@ -544,17 +619,19 @@ export default function Page() {
     const onBet = () =>
         run("bet", async () => {
             const wager = parseEther(wagerInput || "0");
-            if ((allowance ?? 0n) < wager) {
-                // Silent mode approves the exact wager (spend-cap friendly, no UX
-                // cost); popup mode approves a large multiple to spare the user
-                // one dialog per bet.
-                const approveHash = await writeTx({
+            // Fresh read (not the polled hook): approvals can be revoked out-of-band.
+            const live = (await publicClient!.readContract({
+                ...chip, functionName: "allowance", args: [address!, TABLE_ADDRESS],
+            })) as bigint;
+            const calls = [];
+            if (live < wager) {
+                calls.push({
                     ...chip, functionName: "approve",
-                    args: [TABLE_ADDRESS, wager * (oneClickActive ? 1n : 100n)],
+                    args: [TABLE_ADDRESS, wager * (isMoss ? 1n : 100n)] as const,
                 });
-                await publicClient?.waitForTransactionReceipt({hash: approveHash});
             }
-            return writeTx({...table, functionName: "placeBet", args: [wager]});
+            calls.push({...table, functionName: "placeBet", args: [wager] as const});
+            return writeBatch(calls);
         });
 
     const onHit = () => run("hit", () => writeTx({...table, functionName: "hit"}));
@@ -562,14 +639,18 @@ export default function Page() {
     const onDouble = () =>
         run("double", async () => {
             const wager = game!.wager;
-            if ((allowance ?? 0n) < wager) {
-                const approveHash = await writeTx({
+            const live = (await publicClient!.readContract({
+                ...chip, functionName: "allowance", args: [address!, TABLE_ADDRESS],
+            })) as bigint;
+            const calls = [];
+            if (live < wager) {
+                calls.push({
                     ...chip, functionName: "approve",
-                    args: [TABLE_ADDRESS, wager * (oneClickActive ? 1n : 100n)],
+                    args: [TABLE_ADDRESS, wager * (isMoss ? 1n : 100n)] as const,
                 });
-                await publicClient?.waitForTransactionReceipt({hash: approveHash});
             }
-            return writeTx({...table, functionName: "double"});
+            calls.push({...table, functionName: "double"});
+            return writeBatch(calls);
         });
 
     /**
@@ -874,7 +955,9 @@ export default function Page() {
                     address={address}
                     isConnected={isConnected && !wrongNetwork}
                     oneClickActive={grantCovers(tableChoice as string)}
+                    isMoss={isMoss}
                     writeTx={(a) => writeTx(a as Parameters<typeof writeContractAsync>[0])}
+                    writeBatch={writeBatch}
                 />
             ) : (
             <>
