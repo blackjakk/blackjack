@@ -112,3 +112,18 @@ MegaETH mini-blocks land in ~10 ms. Standard `eth_sendRawTransaction` +
 receipt polling works fine; the frontend/SDK use viem defaults. (MegaETH
 also exposes a realtime API for sub-block receipts — an optional
 optimization, not required for correctness.)
+
+## Phase A deployment record — 2026-08-07 (chain 6343)
+
+| Contract | Address | Verification |
+| --- | --- | --- |
+| TableFactory | `0xD45f27a746E2073aE97e599378845B1F8370c8a5` | Sourcify exact_match |
+| BlackjackTableV2 "Classic" (S17, 3:2, double any two; 500k CHIP bankroll) | `0x457e5eb30973af0654aE3f6b5E1ba62d5c97C1cF` | Sourcify exact_match |
+| BlackjackTableV2 "Vegas" (H17, 6:5, double 10-11, surrender; 300k) | `0xe4eDc43D1cD0cC5370fAB275EcB1c50C1CC0b6Ee` | Sourcify exact_match |
+| BlackjackTableV2 "Pro" (S17, 3:2, double 9-11, surrender, 10 CHIP min; 200k) | `0xb414D2B3AAe5Da85813Ea3680895a457e0a08577` | Sourcify exact_match |
+
+Deployed via `script/DeployV2.s.sol` reusing the live TestChip and
+DrandRandomnessProvider (fulfillment is permissionless, so the existing
+keeper sweep covers v2 tables automatically). Funding done via `cast`
+(mint → approve → permissionless `fundHouse`). Admin/treasury on all
+three tables = deployer `0x97eB…a476`. v1 table remains live.
