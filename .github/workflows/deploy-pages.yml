@@ -29,6 +29,7 @@ jobs:
         run: pnpm --filter web build
         env:
           NEXT_PUBLIC_BASE_PATH: /blackjack
+          NEXT_PUBLIC_BUILD_ID: ${{ github.sha }}
       - uses: actions/configure-pages@v5
         with:
           enablement: true

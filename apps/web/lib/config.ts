@@ -44,3 +44,6 @@ export const isConfigured =
 export function txUrl(hash: string): string {
     return `${EXPLORER_URL}/tx/${hash}`;
 }
+
+/** Short commit id baked in at build time, for verifying which deploy is live. */
+export const BUILD_ID = (process.env.NEXT_PUBLIC_BUILD_ID ?? "dev").slice(0, 7);

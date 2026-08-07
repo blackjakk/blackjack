@@ -39,6 +39,7 @@ import {
     activeChain,
     isConfigured,
     txUrl,
+    BUILD_ID,
 } from "../lib/config.ts";
 
 const POLL = {refetchInterval: 1500} as const;
@@ -56,7 +57,11 @@ function fmt(x: bigint | undefined): string {
 /** Translate known wallet errors into something actionable. */
 function friendlyError(msg: string): string {
     if (msg.includes("did not respond")) {
-        return "The MOSS wallet took too long to load (it can be slow on first visit). Wait a few seconds and try again.";
+        return (
+            "The MOSS wallet couldn't finish loading. Try again in a few seconds; " +
+            "if it keeps happening, open account.megaeth.com in a new tab (make sure " +
+            "it loads and you're signed in), then retry here."
+        );
     }
     return msg;
 }
@@ -366,6 +371,17 @@ export default function Page() {
                     <button onClick={() => {
                         resetConnect();
                         setWalletMenu(true);
+                        // Warm the MOSS iframe while the user reads the picker, so
+                        // clicking MOSS doesn't race the whole wallet boot sequence.
+                        // eth_accounts is non-interactive (no prompt).
+                        mossConnector
+                            ?.getProvider()
+                            .then((p) =>
+                                (p as {request: (a: {method: string}) => Promise<unknown>}).request({
+                                    method: "eth_accounts",
+                                }),
+                            )
+                            .catch(() => {});
                     }}>
                         Connect wallet
                     </button>
@@ -626,7 +642,8 @@ export default function Page() {
                 Fully onchain: cards come from committed randomness (drand quicknet via MegaETH&apos;s
                 preinstalled verifier), settlement is enforced by the BlackjackTable contract, and this
                 page only reads chain state — there is no game server. Rules: European no-hole-card,
-                dealer stands on all 17s, blackjack pays 3:2, double on first two cards.
+                dealer stands on all 17s, blackjack pays 3:2, double on first two cards.{" "}
+                <span title="deployed commit">build {BUILD_ID}</span>
             </div>
         </main>
     );
