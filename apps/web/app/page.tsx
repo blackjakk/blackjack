@@ -57,6 +57,15 @@ function fmt(x: bigint | undefined): string {
 /** Translate known wallet errors into something actionable. */
 function friendlyError(msg: string): string {
     if (msg.includes("did not respond")) {
+        const firefox = typeof navigator !== "undefined" && navigator.userAgent.includes("Firefox");
+        if (firefox) {
+            return (
+                "The MOSS wallet couldn't finish loading. In Firefox this is usually a stale " +
+                "wallet session: click the shield/lock icon in the address bar → clear cookies " +
+                "and site data for this site → reload and connect again (passkey sign-in). " +
+                "If it persists, try ETP \"Standard\" instead of \"Strict\", or use an extension wallet."
+            );
+        }
         return (
             "The MOSS wallet couldn't finish loading. Try again in a few seconds; " +
             "if it keeps happening, open account.megaeth.com in a new tab (make sure " +
