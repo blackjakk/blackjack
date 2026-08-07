@@ -147,33 +147,65 @@ export default function Page() {
     const [oneClickGrant, setOneClickGrant] = useState<{expiry: number; targets: string[]} | null>(
         null,
     );
-    useEffect(() => {
-        if (!isMoss || !address) return setOneClickGrant(null);
+    const readCachedGrant = useCallback((): {expiry: number; targets: string[]} | null => {
         const raw = localStorage.getItem(oneClickKey);
-        if (!raw) return setOneClickGrant(null);
+        if (!raw) return null;
         try {
             const p = JSON.parse(raw) as {expiry?: number; targets?: string[]};
             if (p && typeof p.expiry === "number") {
-                return setOneClickGrant({
-                    expiry: p.expiry,
-                    targets: (p.targets ?? []).map((t) => t.toLowerCase()),
-                });
+                return {expiry: p.expiry, targets: (p.targets ?? []).map((t) => t.toLowerCase())};
             }
         } catch {
             /* old format: bare expiry number covering only the v1 contracts */
         }
         const n = Number(raw);
-        setOneClickGrant(
-            n > 0
-                ? {
-                      expiry: n,
-                      targets: [CHIP_ADDRESS, PROVIDER_ADDRESS, TABLE_ADDRESS].map((a) =>
-                          a.toLowerCase(),
-                      ),
+        return n > 0
+            ? {
+                  expiry: n,
+                  targets: [CHIP_ADDRESS, PROVIDER_ADDRESS, TABLE_ADDRESS].map((a) =>
+                      a.toLowerCase(),
+                  ),
+              }
+            : null;
+    }, [oneClickKey]);
+
+    /** The wallet is the source of truth for what a grant covers; the localStorage
+     *  record is only a boot-time cache (approvals can happen out-of-band). */
+    const refreshGrant = useCallback(async () => {
+        if (!isMoss || !address || !liveConnector) return;
+        try {
+            const provider = (await liveConnector.getProvider()) as MossProvider;
+            const res = (await provider.request({method: "wallet_getPermissions"})) as
+                | {
+                      permissions?: {
+                          expiry: number;
+                          permissions: {calls: {to: string}[]};
+                      } | null;
                   }
-                : null,
-        );
-    }, [isMoss, address, oneClickKey]);
+                | undefined;
+            const p = res?.permissions;
+            if (p && p.expiry > Date.now() / 1000 + 60 && p.permissions?.calls?.length) {
+                const targets = Array.from(
+                    new Set(p.permissions.calls.map((c) => c.to.toLowerCase())),
+                );
+                const grant = {expiry: p.expiry, targets};
+                localStorage.setItem(oneClickKey, JSON.stringify(grant));
+                setOneClickGrant(grant);
+            } else if (p === null || p === undefined) {
+                // No active grant wallet-side; drop any stale cache.
+                localStorage.removeItem(oneClickKey);
+                setOneClickGrant(null);
+            }
+        } catch {
+            /* wallet unreachable — keep whatever the cache said */
+        }
+    }, [isMoss, address, liveConnector, oneClickKey]);
+
+    useEffect(() => {
+        if (!isMoss || !address) return setOneClickGrant(null);
+        setOneClickGrant(readCachedGrant());
+        void refreshGrant();
+    }, [isMoss, address, readCachedGrant, refreshGrant]);
     const oneClickExpiry = oneClickGrant?.expiry ?? 0;
     const oneClickActive = isMoss && oneClickExpiry > Date.now() / 1000 + 60;
     const grantCovers = useCallback(
@@ -214,6 +246,7 @@ export default function Page() {
                     // surfacing a dead-end error. Explicit user cancels stay final.
                     const m = err instanceof Error ? err.message : String(err);
                     if (/cancel/i.test(m)) throw err;
+                    void refreshGrant();
                 }
             }
             const doWrite = () =>
@@ -222,7 +255,7 @@ export default function Page() {
                 );
             return liveConnector?.id === "mossWallet" ? withMossRetry(doWrite) : doWrite();
         },
-        [writeContractAsync, liveConnector, oneClickActive, grantCovers],
+        [writeContractAsync, liveConnector, oneClickActive, grantCovers, refreshGrant],
     );
     const wrongNetwork = isConnected && walletChainId !== activeChain.id;
     const {data: gasBalance} = useBalance({
