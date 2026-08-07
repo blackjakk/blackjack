@@ -44,6 +44,20 @@ import {
 
 const POLL = {refetchInterval: 1500} as const;
 
+/** How MOSS "Smart Approvals" session grants are scoped for 1-click play. */
+const ONE_CLICK_HOURS = 24;
+const ONE_CLICK_CHIP_PER_DAY = "5000";
+const ONE_CLICK_GAS_PER_DAY = "0.01";
+
+type MossProvider = {
+    request: (args: {method: string; params?: unknown}) => Promise<unknown>;
+};
+type MossTxResult = {
+    status: "approved" | "cancelled" | "error";
+    error?: string;
+    receipt?: {transactionHash: `0x${string}`};
+};
+
 function CardView({card, hidden}: {card?: Card; hidden?: boolean}) {
     if (hidden || !card) return <div className="card back">?</div>;
     const red = card.suit === 1 || card.suit === 2;
@@ -98,12 +112,48 @@ export default function Page() {
     useEffect(() => {
         if (isConnected && connectorIsShell && !liveConnector) disconnect();
     }, [isConnected, connectorIsShell, liveConnector, disconnect]);
+
+    // ------------------------------------------------- MOSS 1-click play
+    // A Smart Approvals session grant (one passkey approval) lets game calls run
+    // silently: scoped to this table's contracts, capped per day, 24h expiry.
+    const isMoss = liveConnector?.id === "mossWallet";
+    const oneClickKey = `moss-oneclick:${address ?? ""}`;
+    const [oneClickExpiry, setOneClickExpiry] = useState(0);
+    useEffect(() => {
+        if (!isMoss || !address) return setOneClickExpiry(0);
+        setOneClickExpiry(Number(localStorage.getItem(oneClickKey) ?? 0));
+    }, [isMoss, address, oneClickKey]);
+    const oneClickActive = isMoss && oneClickExpiry > Date.now() / 1000 + 60;
+
     const writeTx = useCallback(
-        (args: Parameters<typeof writeContractAsync>[0]) =>
-            writeContractAsync(
+        async (args: Parameters<typeof writeContractAsync>[0]) => {
+            if (oneClickActive && liveConnector) {
+                // Silent path: wallet_callContract with silent:true uses the session
+                // grant; if the grant expired, fall back to the normal approval UI.
+                const provider = (await liveConnector.getProvider()) as MossProvider;
+                const result = (await provider.request({
+                    method: "wallet_callContract",
+                    params: [
+                        {
+                            address: args.address,
+                            abi: args.abi,
+                            functionName: args.functionName,
+                            args: args.args ?? [],
+                            silent: true,
+                            silentUIApproveFallback: true,
+                        },
+                    ],
+                })) as MossTxResult;
+                if (result.status !== "approved" || !result.receipt?.transactionHash) {
+                    throw new Error(result.error ?? `wallet ${result.status ?? "error"}`);
+                }
+                return result.receipt.transactionHash;
+            }
+            return writeContractAsync(
                 liveConnector ? ({...args, connector: liveConnector} as typeof args) : args,
-            ),
-        [writeContractAsync, liveConnector],
+            );
+        },
+        [writeContractAsync, liveConnector, oneClickActive],
     );
     const wrongNetwork = isConnected && walletChainId !== activeChain.id;
     const {data: gasBalance} = useBalance({
@@ -290,12 +340,66 @@ export default function Page() {
 
     const onFaucet = () => run("faucet", () => writeTx({...chip, functionName: "faucet"}));
 
+    /** One passkey approval; afterwards matching game calls skip the popup. */
+    const onEnableOneClick = () =>
+        run("oneclick", async () => {
+            const provider = (await liveConnector!.getProvider()) as MossProvider;
+            const expiry = Math.floor(Date.now() / 1000) + ONE_CLICK_HOURS * 3600;
+            const res = (await provider.request({
+                method: "wallet_grantPermissions",
+                params: [
+                    {
+                        permissions: {
+                            expiry,
+                            permissions: {
+                                calls: [
+                                    {to: CHIP_ADDRESS, signature: "faucet()"},
+                                    {to: CHIP_ADDRESS, signature: "approve(address,uint256)"},
+                                    {to: TABLE_ADDRESS, signature: "placeBet(uint256)"},
+                                    {to: TABLE_ADDRESS, signature: "hit()"},
+                                    {to: TABLE_ADDRESS, signature: "stand()"},
+                                    {to: TABLE_ADDRESS, signature: "double()"},
+                                    {to: TABLE_ADDRESS, signature: "cancelTimedOutGame(uint256)"},
+                                    {to: PROVIDER_ADDRESS, signature: "fulfill(uint256,bytes)"},
+                                ],
+                                spend: [
+                                    {
+                                        limit: parseEther(ONE_CLICK_CHIP_PER_DAY),
+                                        period: "day",
+                                        token: CHIP_ADDRESS,
+                                    },
+                                    {limit: parseEther(ONE_CLICK_GAS_PER_DAY), period: "day"},
+                                ],
+                            },
+                        },
+                    },
+                ],
+            })) as {status?: string};
+            if (res?.status !== "approved") throw new Error("permission grant was not approved");
+            localStorage.setItem(oneClickKey, String(expiry));
+            setOneClickExpiry(expiry);
+            return null;
+        });
+
+    const onDisableOneClick = () =>
+        run("oneclick", async () => {
+            const provider = (await liveConnector!.getProvider()) as MossProvider;
+            await provider.request({method: "wallet_revokePermissions"});
+            localStorage.removeItem(oneClickKey);
+            setOneClickExpiry(0);
+            return null;
+        });
+
     const onBet = () =>
         run("bet", async () => {
             const wager = parseEther(wagerInput || "0");
             if ((allowance ?? 0n) < wager) {
+                // Silent mode approves the exact wager (spend-cap friendly, no UX
+                // cost); popup mode approves a large multiple to spare the user
+                // one dialog per bet.
                 const approveHash = await writeTx({
-                    ...chip, functionName: "approve", args: [TABLE_ADDRESS, wager * 100n],
+                    ...chip, functionName: "approve",
+                    args: [TABLE_ADDRESS, wager * (oneClickActive ? 1n : 100n)],
                 });
                 await publicClient?.waitForTransactionReceipt({hash: approveHash});
             }
@@ -309,7 +413,8 @@ export default function Page() {
             const wager = game!.wager;
             if ((allowance ?? 0n) < wager) {
                 const approveHash = await writeTx({
-                    ...chip, functionName: "approve", args: [TABLE_ADDRESS, wager * 100n],
+                    ...chip, functionName: "approve",
+                    args: [TABLE_ADDRESS, wager * (oneClickActive ? 1n : 100n)],
                 });
                 await publicClient?.waitForTransactionReceipt({hash: approveHash});
             }
@@ -534,6 +639,35 @@ export default function Page() {
                     <button className="secondary" disabled={!!busy} onClick={onFaucet}>
                         {busy === "faucet" ? "Claiming…" : "Claim faucet chips"}
                     </button>
+                </div>
+            )}
+
+            {isMoss && !wrongNetwork && (
+                <div className="panel row">
+                    {oneClickActive ? (
+                        <>
+                            <span className="status">
+                                ⚡ <strong>1-click play is on</strong> — game moves go through without
+                                popups (max {ONE_CLICK_CHIP_PER_DAY} CHIP/day, expires{" "}
+                                {new Date(oneClickExpiry * 1000).toLocaleTimeString()}).
+                            </span>
+                            <button className="secondary" disabled={!!busy} onClick={onDisableOneClick}>
+                                {busy === "oneclick" ? "…" : "Turn off"}
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            <span className="status">
+                                Tired of approving every move? <strong>1-click play</strong> asks for
+                                one passkey approval, then bets/hits/stands run silently. Scoped to
+                                this table only, {ONE_CLICK_CHIP_PER_DAY} CHIP/day cap,{" "}
+                                {ONE_CLICK_HOURS}h expiry, revocable anytime.
+                            </span>
+                            <button disabled={!!busy} onClick={onEnableOneClick}>
+                                {busy === "oneclick" ? "Check the wallet…" : "⚡ Enable 1-click play"}
+                            </button>
+                        </>
+                    )}
                 </div>
             )}
 

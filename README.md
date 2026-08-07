@@ -74,6 +74,13 @@ The web app offers two ways to connect:
 Connection errors are surfaced in the picker; if no extension is detected the
 UI says so instead of failing silently.
 
+With MOSS connected, **1-click play** uses MOSS Smart Approvals: one passkey
+approval grants a session scoped to exactly this deployment's contracts and
+functions (chip faucet/approve, table placeBet/hit/stand/double/cancel,
+provider fulfill), capped at 5,000 CHIP/day + 0.01 gas ETH/day, 24 h expiry,
+revocable in-app or from the wallet. Game moves then execute without popups;
+an expired grant falls back to normal approval dialogs.
+
 ## Network (verified against docs.megaeth.com)
 
 | | Testnet |
