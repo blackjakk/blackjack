@@ -89,6 +89,24 @@ export default function Page() {
               ? [genericInjected]
               : [];
 
+    const [copied, setCopied] = useState(false);
+    const copyAddress = useCallback(async () => {
+        if (!address) return;
+        try {
+            await navigator.clipboard.writeText(address);
+        } catch {
+            // Clipboard API can be unavailable (permissions, old browsers).
+            const ta = document.createElement("textarea");
+            ta.value = address;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            ta.remove();
+        }
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+    }, [address]);
+
     const [wagerInput, setWagerInput] = useState("10");
     const [lastGameId, setLastGameId] = useState<bigint | null>(null);
     const [lastTx, setLastTx] = useState<string | null>(null);
@@ -302,7 +320,9 @@ export default function Page() {
                 <h1>♠ MegaETH Blackjack <span className="status">(testnet)</span></h1>
                 {isConnected ? (
                     <div className="row" style={{gap: 8}}>
-                        <span className="status">{address?.slice(0, 6)}…{address?.slice(-4)}</span>
+                        <button className="secondary addr" title="Copy full address" onClick={copyAddress}>
+                            {copied ? "✓ copied" : <>{address?.slice(0, 6)}…{address?.slice(-4)} ⧉</>}
+                        </button>
                         <button className="secondary" onClick={() => disconnect()}>Disconnect</button>
                     </div>
                 ) : (
@@ -398,11 +418,15 @@ export default function Page() {
                                 <>✅ you have {Number(formatEther(gasBalance.value)).toFixed(4)} testnet ETH</>
                             ) : (
                                 <>
-                                    grab free testnet ETH at{" "}
+                                    copy your address{" "}
+                                    <button className="tiny addr" onClick={copyAddress}>
+                                        {copied ? "✓ copied" : <>{address?.slice(0, 8)}…{address?.slice(-6)} ⧉</>}
+                                    </button>{" "}
+                                    and paste it at{" "}
                                     <a href={GAS_FAUCET_URL} target="_blank" rel="noreferrer">
                                         testnet.megaeth.com
                                     </a>{" "}
-                                    (human check, ~30s)
+                                    for free testnet ETH (human check, ~30s)
                                 </>
                             )}
                         </li>
