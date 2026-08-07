@@ -359,7 +359,7 @@ export default function Page() {
     return (
         <main>
             <div className="row">
-                <h1>♠ MegaETH Blackjack <span className="status">(testnet)</span></h1>
+                <h1>♠ MegaETH Blackjack <span className="status">(testnet · build {BUILD_ID})</span></h1>
                 {isConnected ? (
                     <div className="row" style={{gap: 8}}>
                         <button className="secondary addr" title="Copy full address" onClick={copyAddress}>
