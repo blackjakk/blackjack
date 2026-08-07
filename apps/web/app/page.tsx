@@ -1,6 +1,6 @@
 "use client";
 
-import {useCallback, useEffect, useMemo, useState} from "react";
+import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {
     useAccount,
     useBalance,
@@ -320,7 +320,7 @@ export default function Page() {
     // ---------------------------------------------------------------- actions
 
     const run = useCallback(
-        async (label: string, fn: () => Promise<`0x${string}` | null>) => {
+        async (label: string, fn: () => Promise<`0x${string}` | null>, ignore?: RegExp) => {
             setBusy(label);
             setError(null);
             try {
@@ -330,7 +330,10 @@ export default function Page() {
                     await publicClient?.waitForTransactionReceipt({hash});
                 }
             } catch (err) {
-                setError(friendlyError(err instanceof Error ? err.message.split("\n")[0]! : String(err)));
+                const full = err instanceof Error ? err.message : String(err);
+                if (!ignore?.test(full)) {
+                    setError(friendlyError(full.split("\n")[0]!));
+                }
             } finally {
                 setBusy(null);
             }
@@ -421,26 +424,58 @@ export default function Page() {
             return writeTx({...table, functionName: "double"});
         });
 
-    /** Anyone may submit the public beacon; here the player's own wallet does it. */
+    /**
+     * Anyone may submit the public beacon; here the player's own wallet does it.
+     * A concurrent submitter winning the race reverts us with AlreadyFulfilled —
+     * that's a success for the game, so it's swallowed rather than shown.
+     */
     const onSubmitBeacon = () =>
-        run("beacon", async () => {
-            if (!game || game.pendingRequestId === 0n) return null;
-            if (PROVIDER_KIND === "drand") {
-                if (!drandRound) return null;
-                const sig = await fetchBeaconSignature(BigInt(drandRound));
+        run(
+            "beacon",
+            async () => {
+                if (!game || game.pendingRequestId === 0n) return null;
+                if (PROVIDER_KIND === "drand") {
+                    if (!drandRound) return null;
+                    const sig = await fetchBeaconSignature(BigInt(drandRound));
+                    return writeTx({
+                        address: PROVIDER_ADDRESS, abi: drandRandomnessProviderAbi,
+                        functionName: "fulfill", args: [game.pendingRequestId, sig],
+                    });
+                }
+                // Local dev only: mock provider takes a caller-chosen seed.
+                const bytes = crypto.getRandomValues(new Uint8Array(32));
+                const seed = `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}` as `0x${string}`;
                 return writeTx({
-                    address: PROVIDER_ADDRESS, abi: drandRandomnessProviderAbi,
-                    functionName: "fulfill", args: [game.pendingRequestId, sig],
+                    address: PROVIDER_ADDRESS, abi: mockRandomnessProviderAbi,
+                    functionName: "fulfill", args: [game.pendingRequestId, seed],
                 });
-            }
-            // Local dev only: mock provider takes a caller-chosen seed.
-            const bytes = crypto.getRandomValues(new Uint8Array(32));
-            const seed = `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}` as `0x${string}`;
-            return writeTx({
-                address: PROVIDER_ADDRESS, abi: mockRandomnessProviderAbi,
-                functionName: "fulfill", args: [game.pendingRequestId, seed],
-            });
+            },
+            /AlreadyFulfilled/i,
+        );
+
+    // Auto-reveal: submit the beacon the moment drand publishes it, so a hand
+    // plays bet → short wait → cards, with no button hunting. One attempt per
+    // request id; a failure surfaces the manual button instead of retry-looping.
+    const [autoBeacon, setAutoBeacon] = useState(true);
+    useEffect(() => {
+        const stored = localStorage.getItem("auto-beacon");
+        if (stored !== null) setAutoBeacon(stored === "1");
+    }, []);
+    const toggleAutoBeacon = () =>
+        setAutoBeacon((v) => {
+            localStorage.setItem("auto-beacon", v ? "0" : "1");
+            return !v;
         });
+    const autoTried = useRef<bigint | null>(null);
+    useEffect(() => {
+        if (!autoBeacon || PROVIDER_KIND !== "drand") return;
+        const reqId = game?.pendingRequestId;
+        if (!awaiting || !drandReady || !reqId || busy) return;
+        if (autoTried.current === reqId) return;
+        autoTried.current = reqId;
+        void onSubmitBeacon();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [autoBeacon, awaiting, drandReady, game?.pendingRequestId, busy]);
 
     const onCancel = () =>
         run("cancel", () =>
@@ -721,26 +756,47 @@ export default function Page() {
                     {awaiting && (
                         <div className="row" style={{gap: 8}}>
                             <span className="status">
-                                🎲 waiting for verifiable randomness
-                                {PROVIDER_KIND === "drand" && drandRound
-                                    ? drandReady
-                                        ? " — beacon published, submit it:"
-                                        : ` — drand round ${drandRound} publishes in ~${Math.max(0, Number(drandPublishTime(BigInt(drandRound))) - now)}s`
-                                    : "…"}
+                                {PROVIDER_KIND !== "drand"
+                                    ? "🎲 waiting for randomness…"
+                                    : busy === "beacon"
+                                      ? `🎲 revealing cards…${oneClickActive ? "" : " (confirm in your wallet if prompted)"}`
+                                      : drandReady
+                                        ? autoBeacon && !error
+                                            ? "🎲 beacon published — revealing…"
+                                            : "🎲 beacon published — reveal your cards:"
+                                        : drandRound
+                                          ? `🎲 cards locked to public drand round ${drandRound} — publishes in ~${Math.max(0, Number(drandPublishTime(BigInt(drandRound))) - now)}s`
+                                          : "🎲 committing to a future drand round…"}
                             </span>
-                            <button
-                                className={
-                                    PROVIDER_KIND !== "drand" || drandReady ? "pulse" : "secondary"
-                                }
-                                disabled={!!busy || (PROVIDER_KIND === "drand" && !drandReady)}
-                                onClick={onSubmitBeacon}
-                            >
-                                {busy === "beacon"
-                                    ? "Submitting…"
-                                    : PROVIDER_KIND === "drand"
-                                      ? "Submit beacon"
-                                      : "Reveal (dev seed)"}
-                            </button>
+                            {(PROVIDER_KIND !== "drand" || !autoBeacon || !!error) && (
+                                <button
+                                    className={
+                                        PROVIDER_KIND !== "drand" || drandReady ? "pulse" : "secondary"
+                                    }
+                                    disabled={!!busy || (PROVIDER_KIND === "drand" && !drandReady)}
+                                    onClick={onSubmitBeacon}
+                                >
+                                    {busy === "beacon"
+                                        ? "Submitting…"
+                                        : PROVIDER_KIND === "drand"
+                                          ? "Submit beacon"
+                                          : "Reveal (dev seed)"}
+                                </button>
+                            )}
+                            {PROVIDER_KIND === "drand" && (
+                                <label
+                                    className="status"
+                                    style={{cursor: "pointer", userSelect: "none"}}
+                                    title="Submit the public drand beacon automatically as soon as it publishes (anyone may submit it — it only unlocks the committed cards)"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={autoBeacon}
+                                        onChange={toggleAutoBeacon}
+                                    />{" "}
+                                    auto-reveal
+                                </label>
+                            )}
                             {cancellableAt !== null && now >= cancellableAt && (
                                 <button className="secondary" disabled={!!busy} onClick={onCancel}>
                                     Cancel & refund (timed out)
