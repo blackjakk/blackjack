@@ -21,8 +21,7 @@ contract DeployV2 is Script {
         require(PROVIDER.code.length > 0, "provider missing");
 
         vm.startBroadcast();
-        TableFactory factory =
-            new TableFactory(IERC20(CHIP), IRandomnessProvider(PROVIDER));
+        TableFactory factory = new TableFactory(IERC20(CHIP), IRandomnessProvider(PROVIDER));
 
         // 1. Classic: S17, 3:2, double any two, no surrender (v1-equivalent rules).
         address classic = factory.createTable(

@@ -127,3 +127,24 @@ DrandRandomnessProvider (fulfillment is permissionless, so the existing
 keeper sweep covers v2 tables automatically). Funding done via `cast`
 (mint → approve → permissionless `fundHouse`). Admin/treasury on all
 three tables = deployer `0x97eB…a476`. v1 table remains live.
+
+## LP-vault deployment record — 2026-08-08 (chain 6343)
+
+ERC-4626 `BankrollVault` per table (vault = the table's ONLY treasury; deployer
+treasury role revoked; deployer holds first-LP shares for migrated bankrolls).
+All Sourcify exact_match.
+
+| Vault | Address | Backing table |
+| --- | --- | --- |
+| bjClassic (CHIP) | `0xF4f1726687BcE9C5285Bc9Ab6bacb0Dca9F2E65F` | Classic |
+| bjVegas (CHIP) | `0xC1D56cD890a84B2Bd433421C177b7C1f524A5de4` | Vegas |
+| bjPro (CHIP) | `0xa8332EdB9999A300Acb1e35E8F4A313375aB97a8` | Pro |
+| bjUSDm | `0xee8f3d40060290e959f285a8BA866c4FAF28eA67` | USDm table `0x7007…4003` (empty — awaits LPs) |
+| bjETH | `0x7686DEf9ac25dfE608e27A13c1678Cf9df19E21a` | WETH table `0x7565…d116` (0.25 WETH seed) |
+| bjMEGA | `0xb0FC29344A1AdeE8FbcE46a0B913F3CEa3698C29` | MEGA table `0x480F…D272` (empty — awaits LPs) |
+
+Real-asset tokens verified onchain + docs 2026-08-08: USDm
+`0x15e9…1e5C`, canonical WETH `0x4200…0006`, MEGA `0xc903…e6c2`. Per-asset
+factories: USDm `0x028b…A914`, ETH `0x8aCf…c4a5`, MEGA `0xf865…34a3`.
+LP free-look window (exit-timing around a computable pending beacon) is
+documented in KNOWN_LIMITATIONS.
