@@ -5,6 +5,7 @@ import {useAccount, useSendTransaction} from "wagmi";
 import {formatEther, parseEther, type Address} from "viem";
 import {tableChatAbi, megaethTestnet, DEPLOYMENTS} from "@blackjack/config";
 import {burnerClients, burnerWrite} from "../lib/burner.ts";
+import {useBigPlays, fmtAmount, type Play} from "./ticker.tsx";
 
 const live = DEPLOYMENTS[megaethTestnet.id];
 const CHAT_ADDRESS = (process.env.NEXT_PUBLIC_CHAT_ADDRESS ?? live?.chat ?? "") as Address;
@@ -200,6 +201,17 @@ export function Chat() {
             .sort((a, b) => (a.id < b.id ? -1 : 1));
     }, [tick, muted]);
 
+    // Big wins/losses derived from the game contracts' own settlement events —
+    // interleaved with chat by time, verifiable, impossible to fake.
+    const plays = useBigPlays();
+    const timeline = useMemo(() => {
+        const items: ({t: "m"; ts: number; m: Msg} | {t: "p"; ts: number; p: Play})[] = [
+            ...messages.map((m) => ({t: "m" as const, ts: m.timestamp, m})),
+            ...plays.map((pl) => ({t: "p" as const, ts: pl.timestamp, p: pl})),
+        ];
+        return items.sort((a, b) => a.ts - b.ts);
+    }, [messages, plays]);
+
     const nameOf = useCallback(
         (addr: string) => store.current.nicknames.get(addr.toLowerCase()) || shortAddr(addr),
         [],
@@ -210,7 +222,7 @@ export function Chat() {
         if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 240) {
             el.scrollTop = el.scrollHeight;
         }
-    }, [messages.length]);
+    }, [timeline.length]);
 
     const funded = burnerBalance !== null && burnerBalance > 0n;
 
@@ -354,12 +366,32 @@ export function Chat() {
             )}
 
             <div className="chat-list" ref={listRef}>
-                {messages.length === 0 && (
+                {timeline.length === 0 && (
                     <div className="status" style={{padding: 16}}>
                         No messages yet — say gm ♠
                     </div>
                 )}
-                {messages.map((m) => {
+                {timeline.map((item) => {
+                    if (item.t === "p") {
+                        const p = item.p;
+                        return (
+                            <div key={p.key} className={`ticker ${p.kind}`}>
+                                {p.kind === "win" ? "🎉" : "💥"}{" "}
+                                <strong>{nameOf(p.player)}</strong>{" "}
+                                {p.kind === "win" ? "won" : "lost"} {fmtAmount(p.amount)}{" "}
+                                {p.symbol}
+                                {p.blackjack ? " — BLACKJACK" : ""} at {p.tableName}
+                                <span className="msg-time">
+                                    {" "}
+                                    {new Date(p.timestamp * 1000).toLocaleTimeString([], {
+                                        hour: "2-digit",
+                                        minute: "2-digit",
+                                    })}
+                                </span>
+                            </div>
+                        );
+                    }
+                    const m = item.m;
                     const isMine = m.author.toLowerCase() === mine;
                     const parent = m.replyTo !== 0n
                         ? store.current.messages.get(m.replyTo.toString())
