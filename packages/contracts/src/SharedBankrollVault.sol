@@ -9,35 +9,43 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IBankrollTable} from "./interfaces/IBankrollTable.sol";
 
+/// @notice Minimal provenance surface a trusted factory exposes: did THIS factory
+///         deploy that contract (i.e. is it byte-identical to reviewed game code)?
+interface ITableProvenance {
+    function isFromFactory(address table) external view returns (bool);
+}
+
 /// @title SharedBankrollVault
-/// @notice ERC-4626 vault that is the bankroll for EVERY game of one asset: one MEGA
-///         vault backs the MEGA classic table, the MEGA split table, the MEGA infinite
-///         table, and any future MEGA game added to its member registry. LP deposits
-///         sit idle in the vault until pushed into member tables; the share price
-///         tracks wins/losses across the whole set. Play money only — NOT audited,
-///         NOT for real funds.
-/// @dev Trust wiring (all documented in docs/KNOWN_LIMITATIONS.md):
-///      - The vault must hold each member table's TREASURY_ROLE, and should be the
-///        ONLY holder so LP funds cannot be withdrawn around the vault.
-///      - Membership is a GOVERNANCE ACTION, not an instant admin power: while the
-///        vault has LPs, adding a game takes proposeTable -> membershipDelay ->
-///        activateTable. The delay is enforced to be well above the exit-queue
-///        delay, so every LP who distrusts a proposed table can complete a
-///        fair-price exit before it can touch pool funds. Games that are not
-///        (yet) approved into a shared pool run on their own per-table
-///        BankrollVault instead. Only a vault with ZERO shares outstanding may
-///        add tables instantly — with no LPs there is nobody to protect, and
-///        depositors always see the full member list before depositing.
-///        DEFAULT_ADMIN_ROLE (the proposer) is designed to be handed to a
-///        governance contract later.
-///      - `fundTable` (idle -> member bankroll) is permissionless: it never changes
-///        totalAssets, and pushing funds into a curated member is what deposits are
-///        for. `defundTable` is REBALANCER_ROLE-gated.
+/// @notice ERC-4626 vault that is the bankroll for EVERY approved game of one
+///         asset. LP deposits sit idle until pushed into member tables (subject to
+///         per-game float caps); the share price tracks wins/losses across the
+///         whole set. Play money only — NOT audited, NOT for real funds.
+/// @dev Membership is a GOVERNANCE ACTION with economic skin in the game:
+///      - proposeTable(table, maxFloat) pulls a bond in `bondToken` (MEGA) from
+///        the proposer and starts a timelock; activateTable is permissionless
+///        after it. FACTORY-PROVENANCED tables (byte-identical to reviewed game
+///        code, proven via a trusted factory registry) are tier 1: smaller bond,
+///        quarter delay. Novel-engine tables are tier 2: full bond + full delay.
+///      - Delays are enforced far above the exit-queue delay, so every LP who
+///        distrusts a proposal completes a fair-price exit before activation.
+///        Zero-shares vaults add instantly and bond-free (nobody to protect;
+///        depositors see the member list up front).
+///      - EXPOSURE CAPS bound what a malicious member could ever cost the pool:
+///        fundTable enforces net pushed funds <= maxFloat, and totalAssets counts
+///        a member's houseFunds only up to 2x maxFloat — so a lying table cannot
+///        inflate the pool's books beyond a known bound, and the bond is sized
+///        against a KNOWN worst case instead of the whole pool.
+///      - claimDefault() is the OBJECTIVE slash: any caller can make the pool
+///        test a member's reported liquidity; a member that reports funds it
+///        cannot deliver is ejected and its bond forfeits to `bondBeneficiary`
+///        (governance, for LP compensation). Honest game code can never fail the
+///        test — read and withdrawal happen in one transaction.
+///      - DEFAULT_ADMIN_ROLE is meant to be a TimelockController, later governed
+///        by a token — every privileged action is then public and delayed.
+///        Unapproved games run on their own per-table BankrollVault.
 ///
-///      Exit free-look defense is inherited from BankrollVault: delayed exit queue,
-///      price struck at claim, instant 4626 exits disabled. claim() pays from idle
-///      funds first, then pulls the shortfall out of member tables' UNRESERVED
-///      liquidity.
+///      Exit free-look defense is inherited from BankrollVault: delayed exit
+///      queue, price struck at claim, instant 4626 exits disabled.
 contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -46,20 +54,36 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
 
     /// @notice Minimum time between requesting an exit and its price being struck.
     uint64 public immutable withdrawDelay;
-
-    /// @notice Timelock between proposing a member table and it becoming active
-    ///         (while LPs exist). Enforced >= 2x withdrawDelay so LPs can always
-    ///         complete a full exit (request + mature + claim) before activation.
+    /// @notice Membership timelock for tier-2 (novel-code) proposals. Tier-1
+    ///         (factory-provenanced) proposals wait a quarter of this. Enforced
+    ///         >= 8x withdrawDelay so even the tier-1 delay covers a full exit.
     uint64 public immutable membershipDelay;
 
+    /// @notice Token bonds are posted in (MEGA), independent of the pool asset.
+    IERC20 public immutable bondToken;
+    /// @notice Where slashed bonds go (governance — compensates LPs off-band).
+    address public immutable bondBeneficiary;
+    /// @notice Required bond per tier (tier 1 = factory-provenanced, tier 2 = novel).
+    uint256 public tier1Bond;
+    uint256 public tier2Bond;
+
+    struct Membership {
+        bool isMember;
+        uint96 maxFloat; // cap on net funds the pool will push into the table
+        uint96 netPushed; // pushed minus pulled, floored at zero
+        address proposer; // bond refund recipient
+        uint96 bond; // posted at proposal, returned on clean exit, slashed on default
+        uint64 activatableAt; // pending-proposal eta (0 = none pending)
+    }
+
+    mapping(address => Membership) public memberships;
     IBankrollTable[] internal _tables;
-    mapping(address => bool) public isMember;
-    /// @notice table => activation time of its pending membership proposal (0 = none).
-    mapping(address => uint64) public proposedAt;
     address[] internal _proposals;
+    /// @notice Factories whose deployments count as reviewed game code (tier 1).
+    mapping(address => bool) public trustedFactories;
 
     struct ExitRequest {
-        uint192 shares; // escrowed in the vault until claimed
+        uint192 shares;
         uint64 claimableAt;
     }
 
@@ -68,20 +92,28 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
 
     uint64 internal constant MIN_DELAY = 10 minutes;
     uint64 internal constant MAX_DELAY = 7 days;
-    uint256 internal constant MAX_TABLES = 16; // bounds the totalAssets/claim loops
+    uint256 internal constant MAX_TABLES = 16;
+    uint256 internal constant MAX_FLOAT_BOUND = type(uint96).max;
 
-    event TableAdded(address indexed table);
-    event TableProposed(address indexed table, uint64 activatableAt);
+    event TableProposed(
+        address indexed table, address indexed proposer, uint8 tier, uint256 bond, uint256 maxFloat, uint64 activatableAt
+    );
+    event TableAdded(address indexed table, uint256 maxFloat);
     event TableProposalCancelled(address indexed table);
     event TableRemoved(address indexed table);
+    event TableDefaulted(address indexed table, uint256 slashedBond);
     event TableFunded(address indexed table, address indexed by, uint256 amount);
     event TableDefunded(address indexed table, address indexed by, uint256 amount);
+    event TrustedFactoryUpdated(address indexed factory, bool trusted);
+    event BondsUpdated(uint256 tier1Bond, uint256 tier2Bond);
+    event MaxFloatUpdated(address indexed table, uint256 maxFloat);
     event ExitRequested(address indexed owner, uint256 shares, uint64 claimableAt);
     event ExitClaimed(
         address indexed owner, address indexed receiver, uint256 shares, uint256 assets
     );
 
     error InvalidDelay();
+    error InvalidConfig();
     error UseExitQueue();
     error NothingRequested();
     error NotClaimableYet(uint64 claimableAt);
@@ -94,70 +126,149 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
     error TooManyTables();
     error VaultNotTreasury(address table);
     error TableNotEmpty(address table);
+    error FloatCapExceeded(address table, uint256 requested, uint256 cap);
+    error NotDefaulted(address table);
     error InsufficientLiquidAssets(uint256 needed, uint256 liquid);
 
     constructor(
         IERC20 asset_,
         uint64 withdrawDelay_,
         uint64 membershipDelay_,
+        IERC20 bondToken_,
+        address bondBeneficiary_,
+        uint256 tier2Bond_,
         string memory name_,
         string memory symbol_,
         address admin_
     ) ERC4626(asset_) ERC20(name_, symbol_) {
         if (withdrawDelay_ < MIN_DELAY || withdrawDelay_ > MAX_DELAY) revert InvalidDelay();
-        // >= 2x exit delay: an LP who dislikes a proposal can request an exit,
-        // wait out the queue and claim, all before the table can activate.
-        if (membershipDelay_ < 2 * withdrawDelay_ || membershipDelay_ > 30 days) {
+        // >= 8x: even the tier-1 quarter-delay covers request + queue + claim.
+        if (membershipDelay_ < 8 * withdrawDelay_ || membershipDelay_ > 30 days) {
             revert InvalidDelay();
+        }
+        if (
+            address(bondToken_) == address(0) || bondBeneficiary_ == address(0)
+                || tier2Bond_ > type(uint96).max
+        ) {
+            revert InvalidConfig();
         }
         withdrawDelay = withdrawDelay_;
         membershipDelay = membershipDelay_;
+        bondToken = bondToken_;
+        bondBeneficiary = bondBeneficiary_;
+        tier2Bond = tier2Bond_;
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
         _grantRole(REBALANCER_ROLE, admin_);
     }
 
     // ------------------------------------------------------------- membership
 
-    /// @notice Propose adding a game table to the pool this vault's LPs back.
-    ///         While the vault has NO shares outstanding the table activates
-    ///         immediately (there are no LPs to protect and depositors see the
-    ///         member list up front); otherwise activation waits membershipDelay,
-    ///         giving every LP time to exit at a fair price first. The
-    ///         DEFAULT_ADMIN_ROLE proposer is meant to become a governance
-    ///         contract — until then, unapproved games run on their own
-    ///         per-table BankrollVault.
-    function proposeTable(IBankrollTable table_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    /// @notice Propose adding a game to the pool, posting the tier's bond in
+    ///         `bondToken` and committing to a float cap. Factory-provenanced
+    ///         tables (tier 1) wait membershipDelay/4; novel code (tier 2) waits
+    ///         the full delay. A vault with zero shares outstanding activates
+    ///         immediately and bond-free.
+    function proposeTable(IBankrollTable table_, uint256 maxFloat_)
+        external
+        nonReentrant
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         address t = address(table_);
         _validateCandidate(table_);
-        if (proposedAt[t] != 0) revert AlreadyProposed(t);
+        Membership storage m = memberships[t];
+        if (m.activatableAt != 0) revert AlreadyProposed(t);
+        if (maxFloat_ == 0 || maxFloat_ > MAX_FLOAT_BOUND) revert InvalidConfig();
+        // forge-lint: disable-next-line(unsafe-typecast)
+        m.maxFloat = uint96(maxFloat_);
+        m.proposer = msg.sender;
+
         if (totalSupply() == 0) {
             _addTable(table_);
             return;
         }
-        uint64 eta = uint64(block.timestamp) + membershipDelay;
-        proposedAt[t] = eta;
+        bool tier1 = _isProvenanced(t);
+        uint256 bond = tier1 ? tier1Bond : tier2Bond;
+        uint64 eta =
+            uint64(block.timestamp) + (tier1 ? membershipDelay / 4 : membershipDelay);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        m.bond = uint96(bond);
+        m.activatableAt = eta;
         _proposals.push(t);
-        emit TableProposed(t, eta);
+        emit TableProposed(t, msg.sender, tier1 ? 1 : 2, bond, maxFloat_, eta);
+        if (bond > 0) bondToken.safeTransferFrom(msg.sender, address(this), bond);
     }
 
     /// @notice Activate a matured membership proposal. Permissionless — the
     ///         governance action was the proposal; execution is mechanical.
-    function activateTable(IBankrollTable table_) external {
+    function activateTable(IBankrollTable table_) external nonReentrant {
         address t = address(table_);
-        uint64 eta = proposedAt[t];
-        if (eta == 0) revert NotProposed(t);
-        if (block.timestamp < eta) revert ProposalNotMatured(t, eta);
+        Membership storage m = memberships[t];
+        if (m.activatableAt == 0) revert NotProposed(t);
+        if (block.timestamp < m.activatableAt) revert ProposalNotMatured(t, m.activatableAt);
         _validateCandidate(table_); // re-check: conditions may have changed since
         _removeProposal(t);
         _addTable(table_);
     }
 
-    /// @notice Withdraw a pending membership proposal.
-    function cancelTableProposal(IBankrollTable table_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    /// @notice Withdraw a pending membership proposal; the bond goes back.
+    function cancelTableProposal(IBankrollTable table_)
+        external
+        nonReentrant
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
         address t = address(table_);
-        if (proposedAt[t] == 0) revert NotProposed(t);
+        Membership storage m = memberships[t];
+        if (m.activatableAt == 0) revert NotProposed(t);
+        uint256 bond = m.bond;
+        address proposer = m.proposer;
         _removeProposal(t);
+        delete memberships[t];
         emit TableProposalCancelled(t);
+        if (bond > 0) bondToken.safeTransfer(proposer, bond);
+    }
+
+    /// @notice Remove a member that has been fully defunded; its bond goes back
+    ///         to the proposer (the clean-exit path).
+    function removeTable(IBankrollTable table_) external nonReentrant onlyRole(DEFAULT_ADMIN_ROLE) {
+        address t = address(table_);
+        Membership storage m = memberships[t];
+        if (!m.isMember) revert NotAMember(t);
+        if (table_.houseFunds() != 0) revert TableNotEmpty(t);
+        uint256 bond = m.bond;
+        address proposer = m.proposer;
+        _dropMember(t);
+        emit TableRemoved(t);
+        if (bond > 0) bondToken.safeTransfer(proposer, bond);
+    }
+
+    /// @notice OBJECTIVE default test, callable by anyone: make the pool pull
+    ///         `amount` a member REPORTS as available. Read and withdrawal happen
+    ///         in one transaction, so honest game code can never fail it. A
+    ///         member that cannot deliver what it reports is ejected and its
+    ///         bond forfeits to governance for LP compensation.
+    function claimDefault(IBankrollTable table_, uint256 amount) external nonReentrant {
+        address t = address(table_);
+        Membership storage m = memberships[t];
+        if (!m.isMember) revert NotAMember(t);
+        if (amount == 0 || amount > table_.availableLiquidity()) revert InvalidConfig();
+
+        uint256 before = IERC20(asset()).balanceOf(address(this));
+        bool delivered;
+        try table_.withdrawHouseFunds(address(this), amount) {
+            delivered = IERC20(asset()).balanceOf(address(this)) - before == amount;
+        } catch {
+            delivered = false;
+        }
+        if (delivered) {
+            // Not a default — treat as an ordinary (permissionless) defund probe.
+            m.netPushed = m.netPushed > amount ? m.netPushed - uint96(amount) : 0;
+            emit TableDefunded(t, msg.sender, amount);
+            return;
+        }
+        uint256 bond = m.bond;
+        _dropMember(t);
+        emit TableDefaulted(t, bond);
+        if (bond > 0) bondToken.safeTransfer(bondBeneficiary, bond);
     }
 
     /// @notice Pending membership proposals and their activation times.
@@ -171,54 +282,8 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
         activatableAt = new uint64[](len);
         for (uint256 i; i < len; ++i) {
             tables_[i] = _proposals[i];
-            activatableAt[i] = proposedAt[_proposals[i]];
+            activatableAt[i] = memberships[_proposals[i]].activatableAt;
         }
-    }
-
-    function _validateCandidate(IBankrollTable table_) internal view {
-        address t = address(table_);
-        if (isMember[t]) revert AlreadyMember(t);
-        if (_tables.length >= MAX_TABLES) revert TooManyTables();
-        if (address(table_.chip()) != asset()) revert AssetMismatch(t);
-        // Sanity: membership is useless (and claim() would brick) unless the vault
-        // can actually pull funds back out of the table.
-        if (!table_.hasRole(table_.TREASURY_ROLE(), address(this))) revert VaultNotTreasury(t);
-    }
-
-    function _addTable(IBankrollTable table_) internal {
-        isMember[address(table_)] = true;
-        _tables.push(table_);
-        emit TableAdded(address(table_));
-    }
-
-    function _removeProposal(address t) internal {
-        delete proposedAt[t];
-        uint256 len = _proposals.length;
-        for (uint256 i; i < len; ++i) {
-            if (_proposals[i] == t) {
-                _proposals[i] = _proposals[len - 1];
-                _proposals.pop();
-                break;
-            }
-        }
-    }
-
-    /// @notice Remove a member table. Only allowed once the table holds no house
-    ///         funds (defund it first) so no LP assets are stranded outside the sum.
-    function removeTable(IBankrollTable table_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        address t = address(table_);
-        if (!isMember[t]) revert NotAMember(t);
-        if (table_.houseFunds() != 0) revert TableNotEmpty(t);
-        isMember[t] = false;
-        uint256 len = _tables.length;
-        for (uint256 i; i < len; ++i) {
-            if (address(_tables[i]) == t) {
-                _tables[i] = _tables[len - 1];
-                _tables.pop();
-                break;
-            }
-        }
-        emit TableRemoved(t);
     }
 
     /// @notice Member tables currently backed by this vault.
@@ -230,37 +295,101 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
         }
     }
 
-    // ------------------------------------------------------------- rebalancing
-
-    /// @notice Push idle vault funds into a member table's bankroll so it can accept
-    ///         bets. PERMISSIONLESS: totalAssets is unchanged and members are curated,
-    ///         so the worst anyone can do is fund a table (frontends call this right
-    ///         after a deposit; the keeper tops tables up on a schedule).
-    function fundTable(IBankrollTable table_, uint256 amount) external nonReentrant {
-        if (!isMember[address(table_)]) revert NotAMember(address(table_));
-        IERC20(asset()).forceApprove(address(table_), amount);
-        table_.fundHouse(amount);
-        emit TableFunded(address(table_), msg.sender, amount);
+    function isMember(address table_) external view returns (bool) {
+        return memberships[table_].isMember;
     }
 
-    /// @notice Pull UNRESERVED funds from a member table back to idle (e.g. to
-    ///         rebalance toward a busier table or build the claim buffer).
+    // ------------------------------------------------------------- admin config
+
+    /// @notice Mark a factory's deployments as reviewed game code (tier 1).
+    ///         Admin = timelock/governance, so this is itself public + delayed.
+    function setTrustedFactory(address factory, bool trusted)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        if (trustedFactories[factory] == trusted) return;
+        trustedFactories[factory] = trusted;
+        if (trusted) {
+            _factoryList.push(factory);
+        } else {
+            uint256 len = _factoryList.length;
+            for (uint256 i; i < len; ++i) {
+                if (_factoryList[i] == factory) {
+                    _factoryList[i] = _factoryList[len - 1];
+                    _factoryList.pop();
+                    break;
+                }
+            }
+        }
+        emit TrustedFactoryUpdated(factory, trusted);
+    }
+
+    function setBonds(uint256 tier1Bond_, uint256 tier2Bond_)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        if (tier1Bond_ > type(uint96).max || tier2Bond_ > type(uint96).max) {
+            revert InvalidConfig();
+        }
+        tier1Bond = tier1Bond_;
+        tier2Bond = tier2Bond_;
+        emit BondsUpdated(tier1Bond_, tier2Bond_);
+    }
+
+    /// @notice Raise/lower a member's float cap (a governance judgment as track
+    ///         record accumulates).
+    function setMaxFloat(IBankrollTable table_, uint256 maxFloat_)
+        external
+        onlyRole(DEFAULT_ADMIN_ROLE)
+    {
+        address t = address(table_);
+        if (!memberships[t].isMember) revert NotAMember(t);
+        if (maxFloat_ == 0 || maxFloat_ > MAX_FLOAT_BOUND) revert InvalidConfig();
+        // forge-lint: disable-next-line(unsafe-typecast)
+        memberships[t].maxFloat = uint96(maxFloat_);
+        emit MaxFloatUpdated(t, maxFloat_);
+    }
+
+    // ------------------------------------------------------------- rebalancing
+
+    /// @notice Push idle vault funds into a member's bankroll, bounded by its
+    ///         float cap. PERMISSIONLESS: totalAssets is unchanged, members are
+    ///         governance-approved, and the cap bounds pool exposure.
+    function fundTable(IBankrollTable table_, uint256 amount) external nonReentrant {
+        address t = address(table_);
+        Membership storage m = memberships[t];
+        if (!m.isMember) revert NotAMember(t);
+        uint256 newNet = uint256(m.netPushed) + amount;
+        if (newNet > m.maxFloat) revert FloatCapExceeded(t, newNet, m.maxFloat);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        m.netPushed = uint96(newNet);
+        IERC20(asset()).forceApprove(t, amount);
+        table_.fundHouse(amount);
+        emit TableFunded(t, msg.sender, amount);
+    }
+
+    /// @notice Pull UNRESERVED funds from a member back to idle (rebalance or
+    ///         profit skim — skims keep reported bankrolls near the counted cap).
     function defundTable(IBankrollTable table_, uint256 amount)
         external
         nonReentrant
         onlyRole(REBALANCER_ROLE)
     {
-        if (!isMember[address(table_)]) revert NotAMember(address(table_));
+        address t = address(table_);
+        Membership storage m = memberships[t];
+        if (!m.isMember) revert NotAMember(t);
         table_.withdrawHouseFunds(address(this), amount);
-        emit TableDefunded(address(table_), msg.sender, amount);
+        // forge-lint: disable-next-line(unsafe-typecast)
+        m.netPushed = m.netPushed > amount ? m.netPushed - uint96(amount) : 0;
+        emit TableDefunded(t, msg.sender, amount);
     }
 
     // ------------------------------------------------------------- exit queue
 
-    /// @notice Start (or top up) a delayed exit: `shares` move into vault escrow and
-    ///         become claimable after withdrawDelay. Requests are NON-cancellable and
-    ///         topping up restarts the clock — otherwise a standing request would be
-    ///         a free option on the share price.
+    /// @notice Start (or top up) a delayed exit: `shares` move into vault escrow
+    ///         and become claimable after withdrawDelay. Requests are
+    ///         NON-cancellable and topping up restarts the clock — otherwise a
+    ///         standing request would be a free option on the share price.
     function requestRedeem(uint256 shares) external {
         if (shares == 0) revert NothingRequested();
         _transfer(msg.sender, address(this), shares); // reverts on insufficient balance
@@ -271,9 +400,7 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
     }
 
     /// @notice Claim a matured exit at the CURRENT share price, paying from idle
-    ///         funds first and then from member tables' unreserved liquidity.
-    ///         Reverts if too much of the pool is reserved for in-flight games right
-    ///         now (retry once games settle).
+    ///         funds first and then from members' unreserved liquidity.
     function claim(address receiver) external nonReentrant returns (uint256 assets) {
         ExitRequest memory r = exitRequests[msg.sender];
         if (r.shares == 0) revert NothingRequested();
@@ -286,10 +413,14 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
             uint256 shortfall = assets - idle;
             uint256 len = _tables.length;
             for (uint256 i; i < len && shortfall > 0; ++i) {
-                uint256 pull = _tables[i].availableLiquidity();
+                IBankrollTable tbl = _tables[i];
+                uint256 pull = tbl.availableLiquidity();
                 if (pull == 0) continue;
                 if (pull > shortfall) pull = shortfall;
-                _tables[i].withdrawHouseFunds(address(this), pull);
+                tbl.withdrawHouseFunds(address(this), pull);
+                Membership storage m = memberships[address(tbl)];
+                // forge-lint: disable-next-line(unsafe-typecast)
+                m.netPushed = m.netPushed > pull ? m.netPushed - uint96(pull) : 0;
                 shortfall -= pull;
             }
             if (shortfall > 0) revert InsufficientLiquidAssets(assets, liquidAssets());
@@ -302,24 +433,28 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
 
     // ------------------------------------------------------------- 4626 overrides
 
-    /// @notice The pool's assets: idle funds plus every member table's bankroll
-    ///         (reserved liabilities included — still house money until a game
-    ///         settles against the house).
+    /// @notice The pool's assets: idle funds plus every member's bankroll, with
+    ///         each member's contribution CAPPED at 2x its float — so a lying
+    ///         member can inflate the books only up to a known, bonded bound.
+    ///         (Reserved liabilities are still house money until games settle.)
     function totalAssets() public view override returns (uint256) {
         uint256 sum = IERC20(asset()).balanceOf(address(this));
         uint256 len = _tables.length;
         for (uint256 i; i < len; ++i) {
-            sum += _tables[i].houseFunds();
+            sum += _countedHouseFunds(_tables[i]);
         }
         return sum;
     }
 
-    /// @notice Assets an exit could actually pull right now (idle + unreserved).
+    /// @notice Assets an exit could actually pull right now (idle + unreserved,
+    ///         same per-member cap as totalAssets).
     function liquidAssets() public view returns (uint256) {
         uint256 sum = IERC20(asset()).balanceOf(address(this));
         uint256 len = _tables.length;
         for (uint256 i; i < len; ++i) {
-            sum += _tables[i].availableLiquidity();
+            uint256 avail = _tables[i].availableLiquidity();
+            uint256 cap = uint256(memberships[address(_tables[i])].maxFloat) * 2;
+            sum += avail < cap ? avail : cap;
         }
         return sum;
     }
@@ -334,8 +469,8 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
         return 0;
     }
 
-    /// @dev Blocks the standard 4626 exit paths — the delayed queue is the only way
-    ///      out. Deposits are standard and stay idle until pushed via fundTable.
+    /// @dev Blocks the standard 4626 exit paths — the delayed queue is the only
+    ///      way out. Deposits are standard and stay idle until pushed via fundTable.
     function _withdraw(address, address, address, uint256, uint256) internal pure override {
         revert UseExitQueue();
     }
@@ -344,5 +479,74 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
     ///      attacks economically useless (OZ standard defense).
     function _decimalsOffset() internal pure override returns (uint8) {
         return 6;
+    }
+
+    // ------------------------------------------------------------- internals
+
+    function _countedHouseFunds(IBankrollTable table_) internal view returns (uint256) {
+        uint256 reported = table_.houseFunds();
+        uint256 cap = uint256(memberships[address(table_)].maxFloat) * 2;
+        return reported < cap ? reported : cap;
+    }
+
+    /// @dev A table is tier 1 when any trusted factory attests it deployed it —
+    ///      byte-identity with reviewed game code, checkable onchain. The trusted
+    ///      set is a short governance-curated array.
+    function _isProvenanced(address t) internal view returns (bool) {
+        uint256 len = _factoryList.length;
+        for (uint256 i; i < len; ++i) {
+            address f = _factoryList[i];
+            if (trustedFactories[f] && ITableProvenance(f).isFromFactory(t)) return true;
+        }
+        return false;
+    }
+
+    address[] internal _factoryList;
+
+    /// @notice Enumerable trusted-factory list (for UIs and provenance checks).
+    function factoryList() external view returns (address[] memory) {
+        return _factoryList;
+    }
+
+    function _validateCandidate(IBankrollTable table_) internal view {
+        address t = address(table_);
+        if (memberships[t].isMember) revert AlreadyMember(t);
+        if (_tables.length >= MAX_TABLES) revert TooManyTables();
+        if (address(table_.chip()) != asset()) revert AssetMismatch(t);
+        // Sanity: membership is useless (and claim() would brick) unless the vault
+        // can actually pull funds back out of the table.
+        if (!table_.hasRole(table_.TREASURY_ROLE(), address(this))) revert VaultNotTreasury(t);
+    }
+
+    function _addTable(IBankrollTable table_) internal {
+        Membership storage m = memberships[address(table_)];
+        m.isMember = true;
+        m.activatableAt = 0;
+        _tables.push(table_);
+        emit TableAdded(address(table_), m.maxFloat);
+    }
+
+    function _dropMember(address t) internal {
+        delete memberships[t];
+        uint256 len = _tables.length;
+        for (uint256 i; i < len; ++i) {
+            if (address(_tables[i]) == t) {
+                _tables[i] = _tables[len - 1];
+                _tables.pop();
+                break;
+            }
+        }
+    }
+
+    function _removeProposal(address t) internal {
+        memberships[t].activatableAt = 0;
+        uint256 len = _proposals.length;
+        for (uint256 i; i < len; ++i) {
+            if (_proposals[i] == t) {
+                _proposals[i] = _proposals[len - 1];
+                _proposals.pop();
+                break;
+            }
+        }
     }
 }

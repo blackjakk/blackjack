@@ -4385,6 +4385,25 @@ export const tableFactoryAbi = [
   },
   {
     "type": "function",
+    "name": "isFromFactory",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "provider",
     "inputs": [],
     "outputs": [
@@ -8995,6 +9014,21 @@ export const sharedBankrollVaultAbi = [
         "internalType": "uint64"
       },
       {
+        "name": "bondToken_",
+        "type": "address",
+        "internalType": "contract IERC20"
+      },
+      {
+        "name": "bondBeneficiary_",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tier2Bond_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "name_",
         "type": "string",
         "internalType": "string"
@@ -9133,6 +9167,32 @@ export const sharedBankrollVaultAbi = [
   },
   {
     "type": "function",
+    "name": "bondBeneficiary",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "bondToken",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IERC20"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "cancelTableProposal",
     "inputs": [
       {
@@ -9161,6 +9221,24 @@ export const sharedBankrollVaultAbi = [
         "internalType": "uint256"
       }
     ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "claimDefault",
+    "inputs": [
+      {
+        "name": "table_",
+        "type": "address",
+        "internalType": "contract IBankrollTable"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -9282,6 +9360,19 @@ export const sharedBankrollVaultAbi = [
   },
   {
     "type": "function",
+    "name": "factoryList",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address[]",
+        "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "fundTable",
     "inputs": [
       {
@@ -9364,7 +9455,7 @@ export const sharedBankrollVaultAbi = [
     "name": "isMember",
     "inputs": [
       {
-        "name": "",
+        "name": "table_",
         "type": "address",
         "internalType": "address"
       }
@@ -9474,6 +9565,50 @@ export const sharedBankrollVaultAbi = [
     "outputs": [
       {
         "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "memberships",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "isMember",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "maxFloat",
+        "type": "uint96",
+        "internalType": "uint96"
+      },
+      {
+        "name": "netPushed",
+        "type": "uint96",
+        "internalType": "uint96"
+      },
+      {
+        "name": "proposer",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "bond",
+        "type": "uint96",
+        "internalType": "uint96"
+      },
+      {
+        "name": "activatableAt",
         "type": "uint64",
         "internalType": "uint64"
       }
@@ -9619,29 +9754,15 @@ export const sharedBankrollVaultAbi = [
         "name": "table_",
         "type": "address",
         "internalType": "contract IBankrollTable"
+      },
+      {
+        "name": "maxFloat_",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "proposedAt",
-    "inputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -9736,6 +9857,60 @@ export const sharedBankrollVaultAbi = [
   },
   {
     "type": "function",
+    "name": "setBonds",
+    "inputs": [
+      {
+        "name": "tier1Bond_",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tier2Bond_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setMaxFloat",
+    "inputs": [
+      {
+        "name": "table_",
+        "type": "address",
+        "internalType": "contract IBankrollTable"
+      },
+      {
+        "name": "maxFloat_",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setTrustedFactory",
+    "inputs": [
+      {
+        "name": "factory",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "trusted",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "supportsInterface",
     "inputs": [
       {
@@ -9775,6 +9950,32 @@ export const sharedBankrollVaultAbi = [
         "name": "list",
         "type": "address[]",
         "internalType": "address[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "tier1Bond",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "tier2Bond",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -9860,6 +10061,25 @@ export const sharedBankrollVaultAbi = [
   },
   {
     "type": "function",
+    "name": "trustedFactories",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "withdraw",
     "inputs": [
       {
@@ -9918,6 +10138,25 @@ export const sharedBankrollVaultAbi = [
       },
       {
         "name": "value",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BondsUpdated",
+    "inputs": [
+      {
+        "name": "tier1Bond",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "tier2Bond",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -10014,6 +10253,25 @@ export const sharedBankrollVaultAbi = [
   },
   {
     "type": "event",
+    "name": "MaxFloatUpdated",
+    "inputs": [
+      {
+        "name": "table",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "maxFloat",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RoleAdminChanged",
     "inputs": [
       {
@@ -10096,6 +10354,31 @@ export const sharedBankrollVaultAbi = [
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "maxFloat",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TableDefaulted",
+    "inputs": [
+      {
+        "name": "table",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "slashedBond",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -10174,6 +10457,30 @@ export const sharedBankrollVaultAbi = [
         "internalType": "address"
       },
       {
+        "name": "proposer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "tier",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "bond",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxFloat",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "activatableAt",
         "type": "uint64",
         "indexed": false,
@@ -10216,6 +10523,25 @@ export const sharedBankrollVaultAbi = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TrustedFactoryUpdated",
+    "inputs": [
+      {
+        "name": "factory",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "trusted",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
       }
     ],
     "anonymous": false
@@ -10483,6 +10809,27 @@ export const sharedBankrollVaultAbi = [
   },
   {
     "type": "error",
+    "name": "FloatCapExceeded",
+    "inputs": [
+      {
+        "name": "table",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "cap",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InsufficientLiquidAssets",
     "inputs": [
       {
@@ -10496,6 +10843,11 @@ export const sharedBankrollVaultAbi = [
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidConfig",
+    "inputs": []
   },
   {
     "type": "error",
@@ -10521,6 +10873,17 @@ export const sharedBankrollVaultAbi = [
         "name": "claimableAt",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotDefaulted",
+    "inputs": [
+      {
+        "name": "table",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

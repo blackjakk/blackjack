@@ -32,6 +32,8 @@ export interface BlackjackDeployment {
         table: Address;
         vault: Address;
     }[];
+    /** Decentralization phase: OZ TimelockController holding every admin role. */
+    timelock?: Address;
     /** Phase D: shared multiplayer InfiniteBlackjack tables, one per asset. */
     infiniteTables?: {symbol: string; token: Address; address: Address}[];
     /**
@@ -58,8 +60,12 @@ export const DEPLOYMENTS: Partial<Record<number, BlackjackDeployment>> = {
         deployBlock: 26317836n,
         chat: "0x9768a366EAA389fAc374D0736fee4Cd07D02e180",
         chatDeployBlock: 26320341n,
-        // v2 (2026-08-07): factory + variant tables, all Sourcify exact_match.
-        factory: "0xD45f27a746E2073aE97e599378845B1F8370c8a5",
+        // Decentralization (2026-08-08): all table/pool admin behind a 12 h
+        // public timelock (deployer = sole proposer, open execution).
+        timelock: "0xeD7d0351Fdc1aa7c5aE6395e393fcA43BE25d3f3",
+        // Provenance-recording factories (2026-08-08, isFromFactory) — deployments
+        // are byte-identical to the reviewed engines, the tier-1 trust basis.
+        factory: "0xA29cafeD124864D38dabFe8Fe803cdE61b111Fd0",
         v2Tables: [
             {name: "Classic (S17, 3:2)", address: "0x457e5eb30973af0654aE3f6b5E1ba62d5c97C1cF"},
             {name: "Vegas (H17, 6:5, surrender)", address: "0xe4eDc43D1cD0cC5370fAB275EcB1c50C1CC0b6Ee"},
@@ -80,9 +86,9 @@ export const DEPLOYMENTS: Partial<Record<number, BlackjackDeployment>> = {
         // Real testnet assets (verified onchain + docs 2026-08-08). No faucets for
         // USDm/MEGA — those tables start empty and wait for their first LPs.
         assetTables: [
-            {symbol: "USDm", token: "0x15e9f2B0A747aC05c7446559306687085D161e5C", factory: "0x028bb44f8a1DB4987F71E232C2F57e37B7dcA914", table: "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003", vault: "0xFb26980EBE8BcEdcaa40aD5B561Da33f8894cdAD"},
-            {symbol: "ETH", token: "0x4200000000000000000000000000000000000006", factory: "0x8aCf4D5A48a7ef95e3e0ae03c2385A49B1D6c4a5", table: "0x756595C7d4e3d2668700d0f3d72CDC377b66d116", vault: "0xbae7289F86E4893a69c6bD73E46EC2547C6FA829"},
-            {symbol: "MEGA", token: "0xc903c68C1d389CEd76fEe0349067a4295828e6c2", factory: "0xf865FA56a56C56F9BD9601a4B812bE0F4A5634a3", table: "0x480F77B89B498DD995B72FE9672053836983D272", vault: "0x5d151dDb5ef6Fb2F9F2a290411F44eD77014c550"},
+            {symbol: "USDm", token: "0x15e9f2B0A747aC05c7446559306687085D161e5C", factory: "0x83fa0c3D296c325773C0bB82551735aD6aEbe60B", table: "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003", vault: "0x7B10E47a92a0D571898eC54e9f677f2bC82495fd"},
+            {symbol: "ETH", token: "0x4200000000000000000000000000000000000006", factory: "0xCB7670742A14Fbc2DD76b1f47c5D6b9aA8d900De", table: "0x756595C7d4e3d2668700d0f3d72CDC377b66d116", vault: "0x70eE7F053cB6a203326Ff4a014e6586B3B3E4dcF"},
+            {symbol: "MEGA", token: "0xc903c68C1d389CEd76fEe0349067a4295828e6c2", factory: "0x57C816E3a544B2D74A6f86119e25078287d6D368", table: "0x480F77B89B498DD995B72FE9672053836983D272", vault: "0x85258F50d27d1F171a6564081fd62ec9eeB19D8e"},
         ],
         // Phase D (2026-08-08): shared multiplayer tables, one per asset, all
         // Sourcify exact_match. One drand beacon pair serves every player in a round.
@@ -92,17 +98,17 @@ export const DEPLOYMENTS: Partial<Record<number, BlackjackDeployment>> = {
             {symbol: "ETH", token: "0x4200000000000000000000000000000000000006", address: "0xb25Fd4A3dEFF1926e6B17B1fF8Eb2beBDd807286"},
             {symbol: "MEGA", token: "0xc903c68C1d389CEd76fEe0349067a4295828e6c2", address: "0x6EF4dEf337D24631efEe0e0ffb145Ef835430644"},
         ],
-        // Phase D: one SHARED vault per asset (hp*) backing every member game of
-        // that asset. GOVERNED pools (2026-08-08, superseding the same-day v1
-        // pools): adding a game while LPs exist is a public 48 h timelocked
-        // proposal (proposeTable -> activateTable), so LPs can always exit
-        // through the 1 h queue before a new game touches the pool. Unapproved
-        // games run on their own per-table BankrollVault instead.
+        // Phase D pools, third iteration (2026-08-08, supersedes same-day v1/v2):
+        // membership is a MEGA-bonded, float-capped, timelocked governance
+        // proposal (48 h novel code / 12 h factory-provenanced), objectively
+        // slashable via claimDefault; LPs can always exit through the 1 h queue
+        // before a new game touches the pool. Unapproved games run on their own
+        // per-table BankrollVault instead.
         sharedVaults: [
-            {symbol: "CHIP", token: "0x31E4261aF4Ed630E78d7438Ebcb25Ca7c3c15711", vault: "0x9360f0d73cE4f982b56434e85459550Aa0791fDA", tables: ["0x9103B9723e5BffbBcD70Bfb0785AADF64E2D0E35"]},
-            {symbol: "USDm", token: "0x15e9f2B0A747aC05c7446559306687085D161e5C", vault: "0xFb26980EBE8BcEdcaa40aD5B561Da33f8894cdAD", tables: ["0x70D3f02A850c197Bc339ba9F8530aBcCb4217Aac", "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003"]},
-            {symbol: "ETH", token: "0x4200000000000000000000000000000000000006", vault: "0xbae7289F86E4893a69c6bD73E46EC2547C6FA829", tables: ["0xb25Fd4A3dEFF1926e6B17B1fF8Eb2beBDd807286", "0x756595C7d4e3d2668700d0f3d72CDC377b66d116"]},
-            {symbol: "MEGA", token: "0xc903c68C1d389CEd76fEe0349067a4295828e6c2", vault: "0x5d151dDb5ef6Fb2F9F2a290411F44eD77014c550", tables: ["0x6EF4dEf337D24631efEe0e0ffb145Ef835430644", "0x480F77B89B498DD995B72FE9672053836983D272"]},
+            {symbol: "CHIP", token: "0x31E4261aF4Ed630E78d7438Ebcb25Ca7c3c15711", vault: "0xbf0064b3a503e62d447002210aF1e60150301f25", tables: ["0x9103B9723e5BffbBcD70Bfb0785AADF64E2D0E35"]},
+            {symbol: "USDm", token: "0x15e9f2B0A747aC05c7446559306687085D161e5C", vault: "0x7B10E47a92a0D571898eC54e9f677f2bC82495fd", tables: ["0x70D3f02A850c197Bc339ba9F8530aBcCb4217Aac", "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003"]},
+            {symbol: "ETH", token: "0x4200000000000000000000000000000000000006", vault: "0x70eE7F053cB6a203326Ff4a014e6586B3B3E4dcF", tables: ["0xb25Fd4A3dEFF1926e6B17B1fF8Eb2beBDd807286", "0x756595C7d4e3d2668700d0f3d72CDC377b66d116"]},
+            {symbol: "MEGA", token: "0xc903c68C1d389CEd76fEe0349067a4295828e6c2", vault: "0x85258F50d27d1F171a6564081fd62ec9eeB19D8e", tables: ["0x6EF4dEf337D24631efEe0e0ffb145Ef835430644", "0x480F77B89B498DD995B72FE9672053836983D272"]},
         ],
     },
 };

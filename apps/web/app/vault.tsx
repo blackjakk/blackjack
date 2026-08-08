@@ -178,8 +178,12 @@ export function VaultPanel({
                     ? `Deposit ${symbol} for LP shares of the SHARED ${symbol} bankroll — one
                        pool backs ${(memberTables as readonly Address[] | undefined)?.length ?? "…"} ${symbol}
                        games, so wins and losses at any of them move the same share price.
-                       Adding a game to the pool is a governance action with a public 48 h
-                       timelock — you always have time to exit first if you disagree; games
+                       Adding a game is a governance action: a MEGA bond is staked on the
+                       proposal, a public timelock runs (48 h for novel code, 12 h for
+                       factory-built tables whose bytecode provably matches the reviewed
+                       engine), and per-game float caps bound what any one game could ever
+                       cost the pool — with the bond slashed if a game fails to pay what it
+                       reports. You always have time to exit first if you disagree; games
                        outside the pool run on their own isolated vault.`
                     : `Deposit ${symbol} for LP shares of this table's bankroll: every hand
                        the house wins raises your share value, every player win lowers it.`}{" "}

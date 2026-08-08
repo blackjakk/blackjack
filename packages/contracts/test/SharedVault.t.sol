@@ -6,41 +6,70 @@ import {TestChip} from "../src/TestChip.sol";
 import {BlackjackTableV2} from "../src/BlackjackTableV2.sol";
 import {InfiniteBlackjack} from "../src/InfiniteBlackjack.sol";
 import {SharedBankrollVault} from "../src/SharedBankrollVault.sol";
+import {TableFactory} from "../src/TableFactory.sol";
 import {IBankrollTable} from "../src/interfaces/IBankrollTable.sol";
 import {MockRandomnessProvider} from "../src/rand/MockRandomnessProvider.sol";
 import {IRandomnessProvider} from "../src/interfaces/IRandomnessProvider.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @notice One vault, one asset, many games: a classic v2 table and an infinite
-///         table share a single LP pool. Every unit of bankroll flows through the
+/// @dev A malicious "game": reports funds it does not hold and refuses to pay.
+contract LyingTable {
+    IERC20 public chip;
+    bytes32 public constant TREASURY_ROLE = keccak256("TREASURY_ROLE");
+
+    constructor(IERC20 chip_) {
+        chip = chip_;
+    }
+
+    function houseFunds() external pure returns (uint256) {
+        return 1_000_000_000e18; // pure fiction
+    }
+
+    function availableLiquidity() external pure returns (uint256) {
+        return 1_000_000_000e18;
+    }
+
+    function fundHouse(uint256 amount) external {
+        chip.transferFrom(msg.sender, address(this), amount);
+    }
+
+    function withdrawHouseFunds(address, uint256) external pure {
+        revert("nope");
+    }
+
+    function hasRole(bytes32, address) external pure returns (bool) {
+        return true; // claims anyone is treasury
+    }
+}
+
+/// @notice One vault, one asset, many games — with governance-gated, bonded,
+///         float-capped membership. Every unit of bankroll flows through the
 ///         vault in this suite so share-price assertions are exact.
 contract SharedVaultTest is SeedSearch {
     TestChip internal chip;
+    TestChip internal mega; // bond token stand-in
     MockRandomnessProvider internal mock;
     BlackjackTableV2 internal tblA;
     InfiniteBlackjack internal tblI;
     SharedBankrollVault internal vault;
+    TableFactory internal factory;
 
     address internal admin = makeAddr("admin");
+    address internal gov = makeAddr("governance"); // bond beneficiary (slash sink)
     address internal lp = makeAddr("lp");
     address internal player = makeAddr("player");
 
     uint256 internal constant DEPOSIT = 1_000e18;
     uint256 internal constant W = 10e18;
+    uint256 internal constant TIER2_BOND = 100e18;
+    uint256 internal constant FLOAT = 100_000e18;
 
     function setUp() public {
         chip = new TestChip(admin);
+        mega = new TestChip(admin);
         mock = new MockRandomnessProvider();
-        BlackjackTableV2.Rules memory rules = BlackjackTableV2.Rules({
-            dealerHitsSoft17: false,
-            blackjackNum: 3,
-            blackjackDen: 2,
-            doubleRule: BlackjackTableV2.DoubleRule.ANY_TWO,
-            lateSurrender: false
-        });
-        tblA = new BlackjackTableV2(
-            IERC20(address(chip)), IRandomnessProvider(address(mock)), rules, 1e18, 1_000e18, 5, admin
-        );
+        factory = new TableFactory(IERC20(address(chip)), IRandomnessProvider(address(mock)));
+        tblA = _newV2Table(chip);
         tblI = new InfiniteBlackjack(
             IERC20(address(chip)),
             IRandomnessProvider(address(mock)),
@@ -59,7 +88,15 @@ contract SharedVaultTest is SeedSearch {
             admin
         );
         vault = new SharedBankrollVault(
-            IERC20(address(chip)), 1 hours, 2 hours, "Blackjack CHIP Pool", "bjCHIP", admin
+            IERC20(address(chip)),
+            1 hours,
+            8 hours, // tier-2 delay; tier-1 waits a quarter (2h)
+            IERC20(address(mega)),
+            gov,
+            TIER2_BOND,
+            "Blackjack CHIP Pool",
+            "bjCHIP",
+            admin
         );
 
         vm.startPrank(admin);
@@ -67,11 +104,14 @@ contract SharedVaultTest is SeedSearch {
         tblA.revokeRole(tblA.TREASURY_ROLE(), admin);
         tblI.grantRole(tblI.TREASURY_ROLE(), address(vault));
         tblI.revokeRole(tblI.TREASURY_ROLE(), admin);
-        // Zero shares outstanding -> proposals activate instantly (bootstrap path).
-        vault.proposeTable(IBankrollTable(address(tblA)));
-        vault.proposeTable(IBankrollTable(address(tblI)));
+        vault.setTrustedFactory(address(factory), true);
+        // Zero shares outstanding -> proposals activate instantly and bond-free.
+        vault.proposeTable(IBankrollTable(address(tblA)), FLOAT);
+        vault.proposeTable(IBankrollTable(address(tblI)), FLOAT);
         chip.mint(lp, 10_000e18);
         chip.mint(player, 1_000e18);
+        mega.mint(admin, 10_000e18);
+        mega.approve(address(vault), type(uint256).max);
         vm.stopPrank();
 
         vm.prank(lp);
@@ -104,6 +144,20 @@ contract SharedVaultTest is SeedSearch {
         assertEq(vault.totalAssets(), DEPOSIT, "totalAssets unchanged by rebalance");
     }
 
+    function test_fundTableEnforcesFloatCap() public {
+        deposit();
+        vault.fundTable(IBankrollTable(address(tblA)), 600e18);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SharedBankrollVault.FloatCapExceeded.selector,
+                address(tblA),
+                FLOAT + 1,
+                FLOAT
+            )
+        );
+        vault.fundTable(IBankrollTable(address(tblA)), FLOAT + 1 - 600e18);
+    }
+
     function test_defundIsRoleGated() public {
         deposit();
         vault.fundTable(IBankrollTable(address(tblA)), 600e18);
@@ -122,14 +176,14 @@ contract SharedVaultTest is SeedSearch {
         BlackjackTableV2 rogue = _newV2Table(chip);
         vm.prank(makeAddr("anyone"));
         vm.expectRevert();
-        vault.proposeTable(IBankrollTable(address(rogue)));
+        vault.proposeTable(IBankrollTable(address(rogue)), FLOAT);
 
         // Vault must already hold the table's treasury role.
         vm.prank(admin);
         vm.expectRevert(
             abi.encodeWithSelector(SharedBankrollVault.VaultNotTreasury.selector, address(rogue))
         );
-        vault.proposeTable(IBankrollTable(address(rogue)));
+        vault.proposeTable(IBankrollTable(address(rogue)), FLOAT);
 
         // Asset must match.
         TestChip other = new TestChip(admin);
@@ -139,43 +193,42 @@ contract SharedVaultTest is SeedSearch {
         vm.expectRevert(
             abi.encodeWithSelector(SharedBankrollVault.AssetMismatch.selector, address(wrongAsset))
         );
-        vault.proposeTable(IBankrollTable(address(wrongAsset)));
+        vault.proposeTable(IBankrollTable(address(wrongAsset)), FLOAT);
 
         // No duplicates.
         vm.expectRevert(
             abi.encodeWithSelector(SharedBankrollVault.AlreadyMember.selector, address(tblA))
         );
-        vault.proposeTable(IBankrollTable(address(tblA)));
+        vault.proposeTable(IBankrollTable(address(tblA)), FLOAT);
         vm.stopPrank();
 
         assertEq(vault.tables().length, 2);
     }
 
-    // ------------------------------------------------------------ membership timelock
+    // ------------------------------------------------------------ tiers + bonds
 
     function _readyCandidate() internal returns (BlackjackTableV2 t) {
         t = _newV2Table(chip);
-        bytes32 role = t.TREASURY_ROLE(); // hoisted: an external call in the args would eat the prank
+        bytes32 role = t.TREASURY_ROLE(); // hoisted: external call in args eats the prank
         vm.prank(admin);
         t.grantRole(role, address(vault));
     }
 
-    /// @notice With LPs in the pool, membership is a two-step governance action:
-    ///         propose starts the clock, activation is permissionless after the
-    ///         delay — long enough for a dissenting LP to fully exit first.
-    function test_membershipIsTimelockedOnceLPsExist() public {
+    /// @notice Tier 2 (novel code): full delay, bond pulled at proposal, LPs can
+    ///         complete a full exit inside the window, activation permissionless.
+    function test_tier2MembershipTimelockAndBond() public {
         deposit();
         BlackjackTableV2 t = _readyCandidate();
 
+        uint256 megaBefore = mega.balanceOf(admin);
         vm.prank(admin);
-        vault.proposeTable(IBankrollTable(address(t)));
-        assertFalse(vault.isMember(address(t)), "not a member yet");
+        vault.proposeTable(IBankrollTable(address(t)), FLOAT);
+        assertEq(mega.balanceOf(admin), megaBefore - TIER2_BOND, "tier-2 bond escrowed");
+        assertFalse(vault.isMember(address(t)));
         (address[] memory pend, uint64[] memory etas) = vault.pendingProposals();
-        assertEq(pend.length, 1);
         assertEq(pend[0], address(t));
-        assertEq(etas[0], uint64(block.timestamp) + 2 hours);
+        assertEq(etas[0], uint64(block.timestamp) + 8 hours, "full tier-2 delay");
 
-        // Too early — even the admin cannot short-circuit the delay.
         vm.expectRevert(
             abi.encodeWithSelector(
                 SharedBankrollVault.ProposalNotMatured.selector, address(t), etas[0]
@@ -183,56 +236,125 @@ contract SharedVaultTest is SeedSearch {
         );
         vault.activateTable(IBankrollTable(address(t)));
 
-        // A dissenting LP can complete a FULL exit inside the window.
+        // A dissenting LP fully exits inside the window.
         vm.startPrank(lp);
         vault.requestRedeem(vault.balanceOf(lp));
         vm.warp(block.timestamp + 1 hours);
         vault.claim(lp);
         vm.stopPrank();
 
-        vm.warp(block.timestamp + 1 hours); // eta reached
-        vm.prank(makeAddr("anyone")); // execution is permissionless
+        vm.warp(block.timestamp + 7 hours);
+        vm.prank(makeAddr("anyone"));
         vault.activateTable(IBankrollTable(address(t)));
         assertTrue(vault.isMember(address(t)));
-        (pend,) = vault.pendingProposals();
-        assertEq(pend.length, 0);
     }
 
-    function test_zeroSupplyBootstrapAddsInstantly() public {
-        // setUp already exercised this: two proposals became members with no LPs.
+    /// @notice Tier 1 (factory-provenanced byte-identical code): quarter delay,
+    ///         tier-1 bond (zero by default).
+    function test_tier1FactoryTablesGetQuarterDelay() public {
+        deposit();
+        vm.prank(admin);
+        BlackjackTableV2 t = BlackjackTableV2(
+            factory.createTable(_classicRules(), 1e18, 1_000e18, 5, admin)
+        );
+        assertTrue(factory.isFromFactory(address(t)));
+        bytes32 role = t.TREASURY_ROLE();
+        vm.startPrank(admin);
+        t.grantRole(role, address(vault));
+        uint256 megaBefore = mega.balanceOf(admin);
+        vault.proposeTable(IBankrollTable(address(t)), FLOAT);
+        vm.stopPrank();
+        assertEq(mega.balanceOf(admin), megaBefore, "tier-1 bond is zero by default");
+        (, uint64[] memory etas) = vault.pendingProposals();
+        assertEq(etas[0], uint64(block.timestamp) + 2 hours, "quarter delay");
+    }
+
+    function test_bondReturnedOnCancelAndCleanRemoval() public {
+        deposit();
+        BlackjackTableV2 t = _readyCandidate();
+        uint256 megaBefore = mega.balanceOf(admin);
+
+        // Cancel path.
+        vm.startPrank(admin);
+        vault.proposeTable(IBankrollTable(address(t)), FLOAT);
+        vault.cancelTableProposal(IBankrollTable(address(t)));
+        assertEq(mega.balanceOf(admin), megaBefore, "bond back on cancel");
+
+        // Clean-removal path.
+        vault.proposeTable(IBankrollTable(address(t)), FLOAT);
+        vm.warp(block.timestamp + 8 hours);
+        vault.activateTable(IBankrollTable(address(t)));
+        assertEq(mega.balanceOf(admin), megaBefore - TIER2_BOND);
+        vault.removeTable(IBankrollTable(address(t))); // houseFunds == 0
+        assertEq(mega.balanceOf(admin), megaBefore, "bond back on clean exit");
+        assertFalse(vault.isMember(address(t)));
+        vm.stopPrank();
+    }
+
+    // ------------------------------------------------------------ lying members
+
+    /// @notice The accounting cap: a member's reported houseFunds counts toward
+    ///         totalAssets only up to 2x its float cap — fiction is bounded.
+    function test_totalAssetsCapsLyingMember() public {
+        deposit();
+        LyingTable liar = new LyingTable(IERC20(address(chip)));
+        vm.startPrank(admin);
+        vault.proposeTable(IBankrollTable(address(liar)), 50e18);
+        vm.warp(block.timestamp + 8 hours);
+        vm.stopPrank();
+        vault.activateTable(IBankrollTable(address(liar)));
+
+        // Reports a billion; counts as at most 2 * 50.
+        assertEq(vault.totalAssets(), DEPOSIT + 100e18, "fiction capped at 2x float");
+    }
+
+    /// @notice The objective slash: a member that cannot deliver funds it reports
+    ///         is ejected by anyone and its bond forfeits to governance.
+    function test_claimDefaultSlashesLiar() public {
+        deposit();
+        LyingTable liar = new LyingTable(IERC20(address(chip)));
+        vm.startPrank(admin);
+        vault.proposeTable(IBankrollTable(address(liar)), 50e18);
+        vm.warp(block.timestamp + 8 hours);
+        vm.stopPrank();
+        vault.activateTable(IBankrollTable(address(liar)));
+
+        vm.prank(makeAddr("anyone"));
+        vault.claimDefault(IBankrollTable(address(liar)), 10e18);
+        assertFalse(vault.isMember(address(liar)), "liar ejected");
+        assertEq(mega.balanceOf(gov), TIER2_BOND, "bond slashed to governance");
+        assertEq(vault.totalAssets(), DEPOSIT, "books clean again");
+    }
+
+    /// @notice Honest members pass the default test — it just becomes a defund.
+    function test_claimDefaultIsHarmlessToHonestTables() public {
+        deposit();
+        vault.fundTable(IBankrollTable(address(tblA)), 500e18);
+        vm.prank(makeAddr("anyone"));
+        vault.claimDefault(IBankrollTable(address(tblA)), 200e18);
+        assertTrue(vault.isMember(address(tblA)), "honest member stays");
+        assertEq(tblA.houseFunds(), 300e18);
+        assertEq(chip.balanceOf(address(vault)), DEPOSIT - 300e18);
+        assertEq(vault.totalAssets(), DEPOSIT);
+    }
+
+    // ------------------------------------------------------------ misc governance
+
+    function test_zeroSupplyBootstrapAddsInstantly() public view {
         assertEq(vault.tables().length, 2);
         assertTrue(vault.isMember(address(tblA)));
         assertTrue(vault.isMember(address(tblI)));
-    }
-
-    function test_cancelTableProposal() public {
-        deposit();
-        BlackjackTableV2 t = _readyCandidate();
-        vm.prank(admin);
-        vault.proposeTable(IBankrollTable(address(t)));
-
-        vm.prank(makeAddr("anyone"));
-        vm.expectRevert();
-        vault.cancelTableProposal(IBankrollTable(address(t)));
-
-        vm.prank(admin);
-        vault.cancelTableProposal(IBankrollTable(address(t)));
-        vm.warp(block.timestamp + 2 hours);
-        vm.expectRevert(
-            abi.encodeWithSelector(SharedBankrollVault.NotProposed.selector, address(t))
-        );
-        vault.activateTable(IBankrollTable(address(t)));
     }
 
     function test_activationRechecksConditions() public {
         deposit();
         BlackjackTableV2 t = _readyCandidate();
         vm.startPrank(admin);
-        vault.proposeTable(IBankrollTable(address(t)));
+        vault.proposeTable(IBankrollTable(address(t)), FLOAT);
         // Conditions change during the delay: the vault loses the treasury role.
         t.revokeRole(t.TREASURY_ROLE(), address(vault));
         vm.stopPrank();
-        vm.warp(block.timestamp + 2 hours);
+        vm.warp(block.timestamp + 8 hours);
         vm.expectRevert(
             abi.encodeWithSelector(SharedBankrollVault.VaultNotTreasury.selector, address(t))
         );
@@ -242,8 +364,16 @@ contract SharedVaultTest is SeedSearch {
     function test_membershipDelayMustCoverFullExit() public {
         vm.expectRevert(SharedBankrollVault.InvalidDelay.selector);
         new SharedBankrollVault(
-            IERC20(address(chip)), 1 hours, 119 minutes, "x", "x", admin
-        ); // < 2x withdrawDelay
+            IERC20(address(chip)),
+            1 hours,
+            479 minutes, // < 8x withdrawDelay
+            IERC20(address(mega)),
+            gov,
+            TIER2_BOND,
+            "x",
+            "x",
+            admin
+        );
     }
 
     function test_removeTableOnlyWhenDefunded() public {
@@ -279,12 +409,8 @@ contract SharedVaultTest is SeedSearch {
         vm.prank(player);
         tblA.stand(gameId);
         mock.fulfill(tblA.getGame(gameId).pendingRequestId, findDealerSeedRule(8, 18, false, gameId));
-        assertEq(
-            uint8(tblA.getGame(gameId).outcome), uint8(BlackjackTableV2.Outcome.DEALER_WIN)
-        );
+        assertEq(uint8(tblA.getGame(gameId).outcome), uint8(BlackjackTableV2.Outcome.DEALER_WIN));
 
-        // The loss accrues to the WHOLE pool: every LP share appreciates, and the
-        // vault's books see it no matter which member table it happened at.
         assertEq(vault.totalAssets(), DEPOSIT + W);
         assertGt(vault.previewRedeem(shares), before);
     }
@@ -312,7 +438,6 @@ contract SharedVaultTest is SeedSearch {
         uint256 shares = deposit();
         vault.fundTable(IBankrollTable(address(tblA)), DEPOSIT);
 
-        // A live game reserves 2xW of the bankroll...
         vm.prank(player);
         uint256 gameId = tblA.placeBet(500e18 - 1e18); // reserves ~998, leaves ~2 free
 
@@ -323,7 +448,6 @@ contract SharedVaultTest is SeedSearch {
         vm.expectRevert(); // InsufficientLiquidAssets — most of the pool is reserved
         vault.claim(lp);
 
-        // ...the beacon never arrives, the player cancels, reservations release.
         vm.prank(player);
         tblA.cancelTimedOutGame(gameId);
         vm.prank(lp);
@@ -364,17 +488,21 @@ contract SharedVaultTest is SeedSearch {
 
     // ------------------------------------------------------------ helpers
 
+    function _classicRules() internal pure returns (BlackjackTableV2.Rules memory) {
+        return BlackjackTableV2.Rules({
+            dealerHitsSoft17: false,
+            blackjackNum: 3,
+            blackjackDen: 2,
+            doubleRule: BlackjackTableV2.DoubleRule.ANY_TWO,
+            lateSurrender: false
+        });
+    }
+
     function _newV2Table(TestChip token) internal returns (BlackjackTableV2) {
         return new BlackjackTableV2(
             IERC20(address(token)),
             IRandomnessProvider(address(mock)),
-            BlackjackTableV2.Rules({
-                dealerHitsSoft17: false,
-                blackjackNum: 3,
-                blackjackDen: 2,
-                doubleRule: BlackjackTableV2.DoubleRule.ANY_TWO,
-                lateSurrender: false
-            }),
+            _classicRules(),
             1e18,
             1_000e18,
             5,

@@ -210,3 +210,30 @@ CHIP/ETH funds moved through the v1 pools' own 1 h exit queues
 (`GovernedPools.runTestnet` started the exits, `finishFunded` claimed,
 re-pointed treasuries and re-deposited). Retired v1 pools: 0xDD79…4Bc0,
 0x8F88…5c2E, 0x6558…55D4, 0x03C3…a51C (zero supply, zero roles).
+
+### Decentralization phase — 2026-08-08 (chain 6343): timelock + provenance + bonds
+
+Executed while the deployer was the sole LP of every pool (verified onchain);
+the intermediate v2 governed pools (0x9360…, 0xFb26…, 0xbae7…, 0x5d15…) were
+skipped over before ever holding third-party funds and are retired alongside
+the v1 pools. All Sourcify-verified.
+
+| Contract | Address |
+| --- | --- |
+| TimelockController (12 h, deployer = sole proposer, open execution) | `0xeD7d0351Fdc1aa7c5aE6395e393fcA43BE25d3f3` |
+| hpCHIP v3 (200,025 CHIP; member: CHIP Infinite, float cap 500k) | `0xbf0064b3a503e62d447002210aF1e60150301f25` |
+| hpUSDm v3 (members: USDm Infinite + classic, caps 50k) | `0x7B10E47a92a0D571898eC54e9f677f2bC82495fd` |
+| hpETH v3 (0.25 WETH; members: ETH Infinite + classic, caps 1) | `0x70eE7F053cB6a203326Ff4a014e6586B3B3E4dcF` |
+| hpMEGA v3 (members: MEGA Infinite + classic, caps 50k) | `0x85258F50d27d1F171a6564081fd62ec9eeB19D8e` |
+| TableFactory CHIP (provenance-recording) | `0xA29cafeD124864D38dabFe8Fe803cdE61b111Fd0` |
+| TableFactoryV3 CHIP | `0x8Ee93Fcc41e712589ea1Bf878a02eD2b6f16d23C` |
+| TableFactory USDm / ETH / MEGA | `0x83fa…e60B` / `0xCB76…00De` / `0x57C8…D368` |
+
+Membership model (see KNOWN_LIMITATIONS 15/15a): proposals post a 1,000-MEGA
+tier-2 bond (tier-1/factory-provenanced: 0, quarter delay), commit to a float
+cap that bounds both funding and the member's counted share of totalAssets
+(2x cap), and are objectively slashable via permissionless `claimDefault`.
+DEFAULT_ADMIN_ROLE of ALL 12 tables and 4 pools = the TimelockController;
+deployer retains: timelock proposer, pool REBALANCER, TestChip mint (play
+token), keeper key. Next decentralization rung: governance token takes the
+proposer + rebalancer roles.

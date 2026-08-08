@@ -17,6 +17,10 @@ contract TableFactory {
     IRandomnessProvider public immutable provider;
 
     address[] internal _tables;
+    /// @notice Bytecode provenance: true iff THIS factory deployed `table`, i.e.
+    ///         the table is byte-identical to the reviewed engine (only its
+    ///         constructor parameters differ). Pools use this for tier-1 trust.
+    mapping(address => bool) public isFromFactory;
 
     event TableCreated(
         address indexed table,
@@ -55,6 +59,7 @@ contract TableFactory {
             )
         );
         _tables.push(table);
+        isFromFactory[table] = true;
         emit TableCreated(table, admin_, msg.sender, rules, minWager, maxWager, maxConcurrentGames);
     }
 

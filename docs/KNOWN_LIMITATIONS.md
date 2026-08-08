@@ -54,20 +54,38 @@
     beacon cannot be monetized by exiting. Residual: claims can be
     temporarily blocked while liabilities are reserved; retry after
     settlement.
-15. **Shared-vault membership is a timelocked governance action — MITIGATED,
-    residual documented.** While a pool has LPs, adding a game takes a PUBLIC
-    two-step: proposeTable starts a 48 h timelock (enforced >= 2x the exit
-    delay), activateTable is permissionless after it. Every LP can complete
-    a full fair-price exit (1 h queue) before any proposed table can touch
-    pool funds, and pending proposals are shown in the pool panel. Instant
-    adds exist ONLY while the vault has zero shares (nobody to protect;
-    depositors see the member list up front). Games not approved into a pool
-    run on their own per-table BankrollVault. Residual trust: the proposer
-    (DEFAULT_ADMIN_ROLE, today the deployer key) curates WHAT gets proposed —
-    a malicious proposal still activates if every LP ignores the public 48 h
-    window; the role is designed to be handed to a governance contract.
-    Validation checks treasury-role wiring and asset match; it cannot verify
-    code intent.
+15. **Shared-pool membership: timelocked, bonded, float-capped, objectively
+    slashable — MITIGATED, residuals documented.** While a pool has LPs,
+    adding a game takes a PUBLIC two-step: proposeTable posts a MEGA bond and
+    commits to a per-game float cap, then a timelock runs — 48 h for novel
+    code, 12 h for tables whose bytecode a trusted factory attests it
+    deployed (provable byte-identity with the reviewed engine); activation is
+    permissionless after it. Delays are enforced far above the 1 h exit
+    queue, so every LP exits at a fair price first if they disagree; pending
+    proposals are shown in the pool panel. Exposure is BOUNDED: fundTable
+    never pushes more than the float cap, and totalAssets counts a member's
+    reported houseFunds only up to 2x its cap, so a lying game cannot inflate
+    the pool's books beyond a known bound. claimDefault lets ANYONE make the
+    pool test a member's reported liquidity in a single transaction — honest
+    game code cannot fail it; a member that cannot deliver is ejected and its
+    bond forfeits to governance for LP compensation. Instant bond-free adds
+    exist ONLY while a pool has zero shares (nobody to protect; depositors
+    see the member list up front). Unapproved games run on their own
+    per-table BankrollVault. Residuals: bond sizes vs float caps are a
+    governance judgment (no MEGA price oracle onchain), and a malicious
+    tier-2 proposal still activates if every LP ignores the public window.
+
+15a. **Admin keys live behind a 12 h public timelock.** DEFAULT_ADMIN_ROLE of
+    every table and pool is an OZ TimelockController (12 h min delay, open
+    execution): rule changes, provider swaps, pauses, factory-trust changes
+    and membership proposals are all visible half a day before they can
+    execute. Costs: the emergency pause is slow too (acceptable here — pause
+    only blocks NEW bets, and settlement/cancel work while paused, so no
+    funds can be trapped); the deployer key remains the timelock's sole
+    PROPOSER and keeps the pools' operational REBALANCER role (fund/defund
+    between pool and members — totalAssets-neutral) until a governance token
+    takes both over. TestChip's mint also stays with the deployer (valueless
+    faucet token).
 16. **Infinite rounds need a driver.** lockDeal/lockActions/settle/refund are
     permissionless; player frontends auto-drive their own rounds and the
     keeper cron is the backstop (same liveness class as beacon fulfillment,
