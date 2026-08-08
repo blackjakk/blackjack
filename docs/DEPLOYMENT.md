@@ -175,13 +175,16 @@ that asset. All Sourcify exact_match.
 | --- | --- | --- | --- |
 | CHIP | `0x9103B9723e5BffbBcD70Bfb0785AADF64E2D0E35` | `0xDD796fb9BfDCAb8210884Ccc8634B8f8a2324Bc0` | Infinite (200k CHIP seed) |
 | USDm | `0x70D3f02A850c197Bc339ba9F8530aBcCb4217Aac` | `0x8F88B2FfDEF4F79f9a7C7Ac3429b4A0439965c2E` | Infinite + USDm classic (re-pointed) |
-| ETH | `0xb25Fd4A3dEFF1926e6B17B1fF8Eb2beBDd807286` | `0x6558427457B8bf3C36Ab1E1be88F2a5223cd55D4` | Infinite (classic joins after legacy exit matures) |
+| ETH | `0xb25Fd4A3dEFF1926e6B17B1fF8Eb2beBDd807286` | `0x6558427457B8bf3C36Ab1E1be88F2a5223cd55D4` | Infinite + ETH classic (0.25 WETH, 0.125 per table) |
 | MEGA | `0x6EF4dEf337D24631efEe0e0ffb145Ef835430644` | `0x03C399f63755e04f4E3D56a92972d3f37e93a51C` | Infinite + MEGA classic (re-pointed) |
 
 Migration notes, all verified onchain before acting: legacy bjUSDm/bjMEGA vaults
 held ZERO LP shares, so their classic tables were re-pointed directly (legacy
-treasury roles revoked). bjETH's sole LP is the deployer (0.25 WETH): its delayed
-exit was requested in the deploy tx and `FinishEthMigration` completes the move
-after the 1 h queue. Legacy CHIP per-table vaults (Classic/Vegas/Pro/Split) keep
-their tables and stay fully functional — their LPs migrate self-serve
-(requestRedeem there, deposit into hpCHIP) whenever they choose.
+treasury roles revoked). bjETH's sole LP was the deployer (0.25 WETH): its
+delayed exit was requested in the deploy tx and `FinishEthMigration` completed
+the move once the 1 h queue matured (claimed 0.25 WETH, re-pointed the ETH
+classic table to hpETH, legacy treasury revoked, WETH re-deposited and split
+across both ETH tables; legacy bjETH now has zero supply and zero role). Legacy
+CHIP per-table vaults (Classic/Vegas/Pro/Split) keep their tables and stay
+fully functional — their LPs migrate self-serve (requestRedeem there, deposit
+into hpCHIP) whenever they choose.
