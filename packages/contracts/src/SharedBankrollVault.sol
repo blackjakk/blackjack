@@ -19,11 +19,17 @@ import {IBankrollTable} from "./interfaces/IBankrollTable.sol";
 /// @dev Trust wiring (all documented in docs/KNOWN_LIMITATIONS.md):
 ///      - The vault must hold each member table's TREASURY_ROLE, and should be the
 ///        ONLY holder so LP funds cannot be withdrawn around the vault.
-///      - Membership is DEFAULT_ADMIN_ROLE-gated and is this design's central trust
-///        point: a malicious or buggy member table poisons the WHOLE asset pool
-///        (`totalAssets` sums member `houseFunds`). Members must be verified game
-///        code only. This role is the natural first thing a future governance token
-///        takes over.
+///      - Membership is a GOVERNANCE ACTION, not an instant admin power: while the
+///        vault has LPs, adding a game takes proposeTable -> membershipDelay ->
+///        activateTable. The delay is enforced to be well above the exit-queue
+///        delay, so every LP who distrusts a proposed table can complete a
+///        fair-price exit before it can touch pool funds. Games that are not
+///        (yet) approved into a shared pool run on their own per-table
+///        BankrollVault instead. Only a vault with ZERO shares outstanding may
+///        add tables instantly — with no LPs there is nobody to protect, and
+///        depositors always see the full member list before depositing.
+///        DEFAULT_ADMIN_ROLE (the proposer) is designed to be handed to a
+///        governance contract later.
 ///      - `fundTable` (idle -> member bankroll) is permissionless: it never changes
 ///        totalAssets, and pushing funds into a curated member is what deposits are
 ///        for. `defundTable` is REBALANCER_ROLE-gated.
@@ -41,8 +47,16 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
     /// @notice Minimum time between requesting an exit and its price being struck.
     uint64 public immutable withdrawDelay;
 
+    /// @notice Timelock between proposing a member table and it becoming active
+    ///         (while LPs exist). Enforced >= 2x withdrawDelay so LPs can always
+    ///         complete a full exit (request + mature + claim) before activation.
+    uint64 public immutable membershipDelay;
+
     IBankrollTable[] internal _tables;
     mapping(address => bool) public isMember;
+    /// @notice table => activation time of its pending membership proposal (0 = none).
+    mapping(address => uint64) public proposedAt;
+    address[] internal _proposals;
 
     struct ExitRequest {
         uint192 shares; // escrowed in the vault until claimed
@@ -57,6 +71,8 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
     uint256 internal constant MAX_TABLES = 16; // bounds the totalAssets/claim loops
 
     event TableAdded(address indexed table);
+    event TableProposed(address indexed table, uint64 activatableAt);
+    event TableProposalCancelled(address indexed table);
     event TableRemoved(address indexed table);
     event TableFunded(address indexed table, address indexed by, uint256 amount);
     event TableDefunded(address indexed table, address indexed by, uint256 amount);
@@ -72,6 +88,9 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
     error AssetMismatch(address table);
     error NotAMember(address table);
     error AlreadyMember(address table);
+    error AlreadyProposed(address table);
+    error NotProposed(address table);
+    error ProposalNotMatured(address table, uint64 activatableAt);
     error TooManyTables();
     error VaultNotTreasury(address table);
     error TableNotEmpty(address table);
@@ -80,21 +99,83 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
     constructor(
         IERC20 asset_,
         uint64 withdrawDelay_,
+        uint64 membershipDelay_,
         string memory name_,
         string memory symbol_,
         address admin_
     ) ERC4626(asset_) ERC20(name_, symbol_) {
         if (withdrawDelay_ < MIN_DELAY || withdrawDelay_ > MAX_DELAY) revert InvalidDelay();
+        // >= 2x exit delay: an LP who dislikes a proposal can request an exit,
+        // wait out the queue and claim, all before the table can activate.
+        if (membershipDelay_ < 2 * withdrawDelay_ || membershipDelay_ > 30 days) {
+            revert InvalidDelay();
+        }
         withdrawDelay = withdrawDelay_;
+        membershipDelay = membershipDelay_;
         _grantRole(DEFAULT_ADMIN_ROLE, admin_);
         _grantRole(REBALANCER_ROLE, admin_);
     }
 
     // ------------------------------------------------------------- membership
 
-    /// @notice Add a game table to the pool this vault's LPs are backing. THE trust
-    ///         point of the design — see the contract-level dev note.
-    function addTable(IBankrollTable table_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    /// @notice Propose adding a game table to the pool this vault's LPs back.
+    ///         While the vault has NO shares outstanding the table activates
+    ///         immediately (there are no LPs to protect and depositors see the
+    ///         member list up front); otherwise activation waits membershipDelay,
+    ///         giving every LP time to exit at a fair price first. The
+    ///         DEFAULT_ADMIN_ROLE proposer is meant to become a governance
+    ///         contract — until then, unapproved games run on their own
+    ///         per-table BankrollVault.
+    function proposeTable(IBankrollTable table_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        address t = address(table_);
+        _validateCandidate(table_);
+        if (proposedAt[t] != 0) revert AlreadyProposed(t);
+        if (totalSupply() == 0) {
+            _addTable(table_);
+            return;
+        }
+        uint64 eta = uint64(block.timestamp) + membershipDelay;
+        proposedAt[t] = eta;
+        _proposals.push(t);
+        emit TableProposed(t, eta);
+    }
+
+    /// @notice Activate a matured membership proposal. Permissionless — the
+    ///         governance action was the proposal; execution is mechanical.
+    function activateTable(IBankrollTable table_) external {
+        address t = address(table_);
+        uint64 eta = proposedAt[t];
+        if (eta == 0) revert NotProposed(t);
+        if (block.timestamp < eta) revert ProposalNotMatured(t, eta);
+        _validateCandidate(table_); // re-check: conditions may have changed since
+        _removeProposal(t);
+        _addTable(table_);
+    }
+
+    /// @notice Withdraw a pending membership proposal.
+    function cancelTableProposal(IBankrollTable table_) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        address t = address(table_);
+        if (proposedAt[t] == 0) revert NotProposed(t);
+        _removeProposal(t);
+        emit TableProposalCancelled(t);
+    }
+
+    /// @notice Pending membership proposals and their activation times.
+    function pendingProposals()
+        external
+        view
+        returns (address[] memory tables_, uint64[] memory activatableAt)
+    {
+        uint256 len = _proposals.length;
+        tables_ = new address[](len);
+        activatableAt = new uint64[](len);
+        for (uint256 i; i < len; ++i) {
+            tables_[i] = _proposals[i];
+            activatableAt[i] = proposedAt[_proposals[i]];
+        }
+    }
+
+    function _validateCandidate(IBankrollTable table_) internal view {
         address t = address(table_);
         if (isMember[t]) revert AlreadyMember(t);
         if (_tables.length >= MAX_TABLES) revert TooManyTables();
@@ -102,9 +183,24 @@ contract SharedBankrollVault is ERC4626, AccessControl, ReentrancyGuard {
         // Sanity: membership is useless (and claim() would brick) unless the vault
         // can actually pull funds back out of the table.
         if (!table_.hasRole(table_.TREASURY_ROLE(), address(this))) revert VaultNotTreasury(t);
-        isMember[t] = true;
+    }
+
+    function _addTable(IBankrollTable table_) internal {
+        isMember[address(table_)] = true;
         _tables.push(table_);
-        emit TableAdded(t);
+        emit TableAdded(address(table_));
+    }
+
+    function _removeProposal(address t) internal {
+        delete proposedAt[t];
+        uint256 len = _proposals.length;
+        for (uint256 i; i < len; ++i) {
+            if (_proposals[i] == t) {
+                _proposals[i] = _proposals[len - 1];
+                _proposals.pop();
+                break;
+            }
+        }
     }
 
     /// @notice Remove a member table. Only allowed once the table holds no house

@@ -188,3 +188,25 @@ across both ETH tables; legacy bjETH now has zero supply and zero role). Legacy
 CHIP per-table vaults (Classic/Vegas/Pro/Split) keep their tables and stay
 fully functional — their LPs migrate self-serve (requestRedeem there, deposit
 into hpCHIP) whenever they choose.
+
+### Governed pools — 2026-08-08 (supersedes the same-day v1 hp\* pools)
+
+Pool membership became a GOVERNANCE ACTION: while a pool has LPs, adding a
+game takes `proposeTable` -> 48 h public timelock -> permissionless
+`activateTable` (delay enforced >= 2x the 1 h exit queue, so dissenting LPs
+always exit at a fair price first). Instant adds only while a pool has zero
+shares. Unapproved games run on their own per-table `BankrollVault`. The v1
+pools (deployer-instant `addTable`) were unwound while the deployer was still
+their sole LP — verified onchain — and replaced. All Sourcify exact_match:
+
+| Governed pool | Address | Members |
+| --- | --- | --- |
+| hpCHIP | `0x9360f0d73cE4f982b56434e85459550Aa0791fDA` | CHIP Infinite (200k CHIP) |
+| hpUSDm | `0xFb26980EBE8BcEdcaa40aD5B561Da33f8894cdAD` | USDm Infinite + classic |
+| hpETH | `0xbae7289F86E4893a69c6bD73E46EC2547C6FA829` | ETH Infinite + classic (0.25 WETH) |
+| hpMEGA | `0x5d151dDb5ef6Fb2F9F2a290411F44eD77014c550` | MEGA Infinite + classic |
+
+CHIP/ETH funds moved through the v1 pools' own 1 h exit queues
+(`GovernedPools.runTestnet` started the exits, `finishFunded` claimed,
+re-pointed treasuries and re-deposited). Retired v1 pools: 0xDD79…4Bc0,
+0x8F88…5c2E, 0x6558…55D4, 0x03C3…a51C (zero supply, zero roles).

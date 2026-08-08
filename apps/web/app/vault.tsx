@@ -85,6 +85,17 @@ export function VaultPanel({
         args: [address ?? zero],
         query: {...POLL, enabled: isConnected},
     });
+    // Governance transparency: pending membership proposals (shared pools only).
+    const {data: proposalsData} = useReadContract({
+        ...v,
+        functionName: "pendingProposals",
+        query: {...POLL, enabled: shared},
+    });
+    const {data: memberTables} = useReadContract({
+        ...v,
+        functionName: "tables",
+        query: {refetchInterval: 30_000, enabled: shared},
+    });
 
     const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
     useEffect(() => {
@@ -165,13 +176,48 @@ export function VaultPanel({
             <div className="status" style={{marginTop: 6}}>
                 {shared
                     ? `Deposit ${symbol} for LP shares of the SHARED ${symbol} bankroll — one
-                       pool backs every ${symbol} game here (classic, infinite, and future
-                       tables), so wins and losses at any of them move the same share price.`
+                       pool backs ${(memberTables as readonly Address[] | undefined)?.length ?? "…"} ${symbol}
+                       games, so wins and losses at any of them move the same share price.
+                       Adding a game to the pool is a governance action with a public 48 h
+                       timelock — you always have time to exit first if you disagree; games
+                       outside the pool run on their own isolated vault.`
                     : `Deposit ${symbol} for LP shares of this table's bankroll: every hand
                        the house wins raises your share value, every player win lowers it.`}{" "}
                 Exits are a two-step queue (request → 1 h wait → claim at the then-current
                 price) so nobody can dodge a loss they saw coming. Play money — unaudited.
             </div>
+            {shared &&
+                (() => {
+                    const [pTables, pEtas] =
+                        (proposalsData as readonly [readonly Address[], readonly bigint[]] | undefined) ?? [[], []];
+                    if (pTables.length === 0) return null;
+                    return pTables.map((t, i) => {
+                        const eta = Number(pEtas[i] ?? 0n);
+                        const ready = now >= eta;
+                        return (
+                            <div className="row" key={t} style={{marginTop: 8}}>
+                                <span className="status">
+                                    🗳️ Proposed new pool game {t.slice(0, 6)}…{t.slice(-4)} —{" "}
+                                    {ready
+                                        ? "timelock elapsed, anyone can activate"
+                                        : `activatable in ${Math.floor((eta - now) / 3600)}h ${Math.floor(((eta - now) % 3600) / 60)}m (exit first if you disagree)`}
+                                </span>
+                                {ready && (
+                                    <button
+                                        disabled={!!busy}
+                                        onClick={() =>
+                                            run("activate", () =>
+                                                writeTx({...v, functionName: "activateTable", args: [t]}),
+                                            )
+                                        }
+                                    >
+                                        {busy === "activate" ? "…" : "Activate"}
+                                    </button>
+                                )}
+                            </div>
+                        );
+                    });
+                })()}
 
             {isConnected && (
                 <>

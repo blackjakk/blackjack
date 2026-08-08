@@ -39,6 +39,7 @@ contract DeployInfinite is Script {
     uint64 internal constant BET_WINDOW = 45;
     uint64 internal constant ACT_WINDOW = 40;
     uint64 internal constant EXIT_DELAY = 1 hours;
+    uint64 internal constant MEMBERSHIP_DELAY = 48 hours;
 
     function _rules() internal pure returns (InfiniteBlackjack.Rules memory) {
         return InfiniteBlackjack.Rules({
@@ -68,10 +69,12 @@ contract DeployInfinite is Script {
             100,
             msg.sender
         );
-        vault = new SharedBankrollVault(IERC20(token), EXIT_DELAY, name, symbol, msg.sender);
+        vault = new SharedBankrollVault(
+            IERC20(token), EXIT_DELAY, MEMBERSHIP_DELAY, name, symbol, msg.sender
+        );
         tbl.grantRole(tbl.TREASURY_ROLE(), address(vault));
         tbl.revokeRole(tbl.TREASURY_ROLE(), msg.sender);
-        vault.addTable(IBankrollTable(address(tbl)));
+        vault.proposeTable(IBankrollTable(address(tbl))); // zero supply -> instant
     }
 
     /// @dev Move an (LP-empty, onchain-verified) classic table from its legacy
@@ -83,7 +86,7 @@ contract DeployInfinite is Script {
         require(BankrollVault(legacyVault).totalSupply() == 0, "legacy vault has LPs");
         t.grantRole(t.TREASURY_ROLE(), address(pool));
         t.revokeRole(t.TREASURY_ROLE(), legacyVault);
-        pool.addTable(IBankrollTable(classic));
+        pool.proposeTable(IBankrollTable(classic)); // zero supply -> instant
     }
 
     function runTestnet() external {
@@ -147,7 +150,7 @@ contract FinishEthMigration is Script {
         require(BankrollVault(ETH_LEGACY_VAULT).totalSupply() == 0, "legacy vault has LPs");
         t.grantRole(t.TREASURY_ROLE(), address(pool));
         t.revokeRole(t.TREASURY_ROLE(), ETH_LEGACY_VAULT);
-        pool.addTable(IBankrollTable(ETH_TABLE));
+        pool.proposeTable(IBankrollTable(ETH_TABLE));
 
         IERC20(WETH).approve(address(pool), recovered);
         pool.deposit(recovered, msg.sender);

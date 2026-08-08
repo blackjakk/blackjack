@@ -8990,6 +8990,11 @@ export const sharedBankrollVaultAbi = [
         "internalType": "uint64"
       },
       {
+        "name": "membershipDelay_",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
         "name": "name_",
         "type": "string",
         "internalType": "string"
@@ -9035,7 +9040,7 @@ export const sharedBankrollVaultAbi = [
   },
   {
     "type": "function",
-    "name": "addTable",
+    "name": "activateTable",
     "inputs": [
       {
         "name": "table_",
@@ -9125,6 +9130,19 @@ export const sharedBankrollVaultAbi = [
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "cancelTableProposal",
+    "inputs": [
+      {
+        "name": "table_",
+        "type": "address",
+        "internalType": "contract IBankrollTable"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -9451,6 +9469,19 @@ export const sharedBankrollVaultAbi = [
   },
   {
     "type": "function",
+    "name": "membershipDelay",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "mint",
     "inputs": [
       {
@@ -9482,6 +9513,24 @@ export const sharedBankrollVaultAbi = [
         "name": "",
         "type": "string",
         "internalType": "string"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "pendingProposals",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "tables_",
+        "type": "address[]",
+        "internalType": "address[]"
+      },
+      {
+        "name": "activatableAt",
+        "type": "uint64[]",
+        "internalType": "uint64[]"
       }
     ],
     "stateMutability": "view"
@@ -9558,6 +9607,38 @@ export const sharedBankrollVaultAbi = [
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "proposeTable",
+    "inputs": [
+      {
+        "name": "table_",
+        "type": "address",
+        "internalType": "contract IBankrollTable"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "proposedAt",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "stateMutability": "view"
@@ -10071,6 +10152,38 @@ export const sharedBankrollVaultAbi = [
   },
   {
     "type": "event",
+    "name": "TableProposalCancelled",
+    "inputs": [
+      {
+        "name": "table",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TableProposed",
+    "inputs": [
+      {
+        "name": "table",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "activatableAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TableRemoved",
     "inputs": [
       {
@@ -10168,6 +10281,17 @@ export const sharedBankrollVaultAbi = [
   {
     "type": "error",
     "name": "AlreadyMember",
+    "inputs": [
+      {
+        "name": "table",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AlreadyProposed",
     "inputs": [
       {
         "name": "table",
@@ -10402,8 +10526,35 @@ export const sharedBankrollVaultAbi = [
   },
   {
     "type": "error",
+    "name": "NotProposed",
+    "inputs": [
+      {
+        "name": "table",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NothingRequested",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProposalNotMatured",
+    "inputs": [
+      {
+        "name": "table",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "activatableAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
   },
   {
     "type": "error",

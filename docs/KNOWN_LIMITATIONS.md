@@ -54,14 +54,20 @@
     beacon cannot be monetized by exiting. Residual: claims can be
     temporarily blocked while liabilities are reserved; retry after
     settlement.
-15. **Shared-vault membership is an admin power (documented trust point).**
-    A SharedBankrollVault's DEFAULT_ADMIN_ROLE decides which game tables the
-    pool backs. A malicious or buggy member table would poison the WHOLE
-    asset pool (totalAssets sums member houseFunds), so membership must only
-    ever be verified game code; today that judgment rests with the deployer
-    key, and this role is the natural first thing a future governance token
-    takes over. `addTable` checks the vault actually holds the table's
-    treasury role and that assets match; it cannot verify code intent.
+15. **Shared-vault membership is a timelocked governance action — MITIGATED,
+    residual documented.** While a pool has LPs, adding a game takes a PUBLIC
+    two-step: proposeTable starts a 48 h timelock (enforced >= 2x the exit
+    delay), activateTable is permissionless after it. Every LP can complete
+    a full fair-price exit (1 h queue) before any proposed table can touch
+    pool funds, and pending proposals are shown in the pool panel. Instant
+    adds exist ONLY while the vault has zero shares (nobody to protect;
+    depositors see the member list up front). Games not approved into a pool
+    run on their own per-table BankrollVault. Residual trust: the proposer
+    (DEFAULT_ADMIN_ROLE, today the deployer key) curates WHAT gets proposed —
+    a malicious proposal still activates if every LP ignores the public 48 h
+    window; the role is designed to be handed to a governance contract.
+    Validation checks treasury-role wiring and asset match; it cannot verify
+    code intent.
 16. **Infinite rounds need a driver.** lockDeal/lockActions/settle/refund are
     permissionless; player frontends auto-drive their own rounds and the
     keeper cron is the backstop (same liveness class as beacon fulfillment,

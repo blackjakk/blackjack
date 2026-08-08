@@ -58,16 +58,18 @@ contract SharedVaultTest is SeedSearch {
             100,
             admin
         );
-        vault =
-            new SharedBankrollVault(IERC20(address(chip)), 1 hours, "Blackjack CHIP Pool", "bjCHIP", admin);
+        vault = new SharedBankrollVault(
+            IERC20(address(chip)), 1 hours, 2 hours, "Blackjack CHIP Pool", "bjCHIP", admin
+        );
 
         vm.startPrank(admin);
         tblA.grantRole(tblA.TREASURY_ROLE(), address(vault));
         tblA.revokeRole(tblA.TREASURY_ROLE(), admin);
         tblI.grantRole(tblI.TREASURY_ROLE(), address(vault));
         tblI.revokeRole(tblI.TREASURY_ROLE(), admin);
-        vault.addTable(IBankrollTable(address(tblA)));
-        vault.addTable(IBankrollTable(address(tblI)));
+        // Zero shares outstanding -> proposals activate instantly (bootstrap path).
+        vault.proposeTable(IBankrollTable(address(tblA)));
+        vault.proposeTable(IBankrollTable(address(tblI)));
         chip.mint(lp, 10_000e18);
         chip.mint(player, 1_000e18);
         vm.stopPrank();
@@ -115,19 +117,19 @@ contract SharedVaultTest is SeedSearch {
         assertEq(chip.balanceOf(address(vault)), 500e18);
     }
 
-    function test_addTableGuards() public {
-        // Non-admin cannot add.
+    function test_proposeTableGuards() public {
+        // Non-admin cannot propose.
         BlackjackTableV2 rogue = _newV2Table(chip);
         vm.prank(makeAddr("anyone"));
         vm.expectRevert();
-        vault.addTable(IBankrollTable(address(rogue)));
+        vault.proposeTable(IBankrollTable(address(rogue)));
 
         // Vault must already hold the table's treasury role.
         vm.prank(admin);
         vm.expectRevert(
             abi.encodeWithSelector(SharedBankrollVault.VaultNotTreasury.selector, address(rogue))
         );
-        vault.addTable(IBankrollTable(address(rogue)));
+        vault.proposeTable(IBankrollTable(address(rogue)));
 
         // Asset must match.
         TestChip other = new TestChip(admin);
@@ -137,16 +139,111 @@ contract SharedVaultTest is SeedSearch {
         vm.expectRevert(
             abi.encodeWithSelector(SharedBankrollVault.AssetMismatch.selector, address(wrongAsset))
         );
-        vault.addTable(IBankrollTable(address(wrongAsset)));
+        vault.proposeTable(IBankrollTable(address(wrongAsset)));
 
         // No duplicates.
         vm.expectRevert(
             abi.encodeWithSelector(SharedBankrollVault.AlreadyMember.selector, address(tblA))
         );
-        vault.addTable(IBankrollTable(address(tblA)));
+        vault.proposeTable(IBankrollTable(address(tblA)));
         vm.stopPrank();
 
         assertEq(vault.tables().length, 2);
+    }
+
+    // ------------------------------------------------------------ membership timelock
+
+    function _readyCandidate() internal returns (BlackjackTableV2 t) {
+        t = _newV2Table(chip);
+        bytes32 role = t.TREASURY_ROLE(); // hoisted: an external call in the args would eat the prank
+        vm.prank(admin);
+        t.grantRole(role, address(vault));
+    }
+
+    /// @notice With LPs in the pool, membership is a two-step governance action:
+    ///         propose starts the clock, activation is permissionless after the
+    ///         delay — long enough for a dissenting LP to fully exit first.
+    function test_membershipIsTimelockedOnceLPsExist() public {
+        deposit();
+        BlackjackTableV2 t = _readyCandidate();
+
+        vm.prank(admin);
+        vault.proposeTable(IBankrollTable(address(t)));
+        assertFalse(vault.isMember(address(t)), "not a member yet");
+        (address[] memory pend, uint64[] memory etas) = vault.pendingProposals();
+        assertEq(pend.length, 1);
+        assertEq(pend[0], address(t));
+        assertEq(etas[0], uint64(block.timestamp) + 2 hours);
+
+        // Too early — even the admin cannot short-circuit the delay.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                SharedBankrollVault.ProposalNotMatured.selector, address(t), etas[0]
+            )
+        );
+        vault.activateTable(IBankrollTable(address(t)));
+
+        // A dissenting LP can complete a FULL exit inside the window.
+        vm.startPrank(lp);
+        vault.requestRedeem(vault.balanceOf(lp));
+        vm.warp(block.timestamp + 1 hours);
+        vault.claim(lp);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 1 hours); // eta reached
+        vm.prank(makeAddr("anyone")); // execution is permissionless
+        vault.activateTable(IBankrollTable(address(t)));
+        assertTrue(vault.isMember(address(t)));
+        (pend,) = vault.pendingProposals();
+        assertEq(pend.length, 0);
+    }
+
+    function test_zeroSupplyBootstrapAddsInstantly() public {
+        // setUp already exercised this: two proposals became members with no LPs.
+        assertEq(vault.tables().length, 2);
+        assertTrue(vault.isMember(address(tblA)));
+        assertTrue(vault.isMember(address(tblI)));
+    }
+
+    function test_cancelTableProposal() public {
+        deposit();
+        BlackjackTableV2 t = _readyCandidate();
+        vm.prank(admin);
+        vault.proposeTable(IBankrollTable(address(t)));
+
+        vm.prank(makeAddr("anyone"));
+        vm.expectRevert();
+        vault.cancelTableProposal(IBankrollTable(address(t)));
+
+        vm.prank(admin);
+        vault.cancelTableProposal(IBankrollTable(address(t)));
+        vm.warp(block.timestamp + 2 hours);
+        vm.expectRevert(
+            abi.encodeWithSelector(SharedBankrollVault.NotProposed.selector, address(t))
+        );
+        vault.activateTable(IBankrollTable(address(t)));
+    }
+
+    function test_activationRechecksConditions() public {
+        deposit();
+        BlackjackTableV2 t = _readyCandidate();
+        vm.startPrank(admin);
+        vault.proposeTable(IBankrollTable(address(t)));
+        // Conditions change during the delay: the vault loses the treasury role.
+        t.revokeRole(t.TREASURY_ROLE(), address(vault));
+        vm.stopPrank();
+        vm.warp(block.timestamp + 2 hours);
+        vm.expectRevert(
+            abi.encodeWithSelector(SharedBankrollVault.VaultNotTreasury.selector, address(t))
+        );
+        vault.activateTable(IBankrollTable(address(t)));
+    }
+
+    function test_membershipDelayMustCoverFullExit() public {
+        vm.expectRevert(SharedBankrollVault.InvalidDelay.selector);
+        new SharedBankrollVault(
+            IERC20(address(chip)), 1 hours, 119 minutes, "x", "x", admin
+        ); // < 2x withdrawDelay
     }
 
     function test_removeTableOnlyWhenDefunded() public {
