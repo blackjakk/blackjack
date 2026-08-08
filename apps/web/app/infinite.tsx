@@ -2,6 +2,7 @@
 
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {usePublicClient, useReadContract, useReadContracts} from "wagmi";
+import {useQueryClient} from "@tanstack/react-query";
 import type {Address} from "viem";
 import {parseEther} from "viem";
 import {
@@ -105,6 +106,7 @@ export function InfiniteTable({
     writeBatch: WriteBatch;
 }) {
     const publicClient = usePublicClient();
+    const queryClient = useQueryClient();
     const tbl = {address: table, abi: infiniteBlackjackAbi} as const;
     const chip = {address: token, abi: testChipAbi} as const;
 
@@ -195,6 +197,9 @@ export function InfiniteTable({
                 if (hash) {
                     setLastTx(hash);
                     await publicClient?.waitForTransactionReceipt({hash});
+                    // Refresh every polled read NOW instead of waiting out the
+                    // next poll tick — actions register instantly.
+                    void queryClient.invalidateQueries();
                 }
             } catch (err) {
                 const full = err instanceof Error ? err.message : String(err);
@@ -203,7 +208,7 @@ export function InfiniteTable({
                 setBusy(null);
             }
         },
-        [publicClient],
+        [publicClient, queryClient],
     );
 
     const [wagerInput, setWagerInput] = useState("10");
@@ -267,15 +272,18 @@ export function InfiniteTable({
         );
 
     // Auto-drive: participants push the shared round forward (the keeper cron is
-    // the backstop). One attempt per (round, step); losing the race is harmless.
-    const driveTried = useRef<Set<string>>(new Set());
+    // the backstop). Attempts RETRY every few seconds while their condition
+    // still holds — a raced or transiently failed attempt must not leave the
+    // round stalled until the keeper cron.
+    const driveTried = useRef<Map<string, number>>(new Map());
     const iAmIn = myBet !== undefined && myBet.wager > 0n;
     useEffect(() => {
         if (busy || !isConnected || !round || roundId === 0n) return;
         const tryOnce = (step: string, go: () => void) => {
             const key = `${roundId}:${step}`;
-            if (driveTried.current.has(key)) return;
-            driveTried.current.add(key);
+            const last = driveTried.current.get(key) ?? 0;
+            if (now - last < 4) return; // retry while the condition persists
+            driveTried.current.set(key, now);
             go();
         };
         // Beacon reveal: any watcher may submit once the drand round publishes.
@@ -287,11 +295,11 @@ export function InfiniteTable({
             return;
         }
         if (!iAmIn) return; // spectators don't pay gas; the keeper drives
-        if (round.state === RS.BETTING && now >= Number(round.betDeadline) + 1) {
+        if (round.state === RS.BETTING && now >= Number(round.betDeadline) + 2) {
             tryOnce("lockDeal", () => void onDrive("lockDeal"));
         } else if (
             round.state === RS.ACTING
-            && (round.actedCount >= round.playerCount || now >= Number(round.actDeadline) + 1)
+            && (round.actedCount >= round.playerCount || now >= Number(round.actDeadline) + 2)
         ) {
             tryOnce("lockActions", () => void onDrive("lockActions"));
         } else if (round.state === RS.SETTLING) {

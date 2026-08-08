@@ -12,6 +12,7 @@ import {
     useWatchContractEvent,
     useWriteContract,
 } from "wagmi";
+import {useQueryClient} from "@tanstack/react-query";
 import {formatEther, parseEther} from "viem";
 import {
     blackjackTableAbi,
@@ -148,6 +149,7 @@ export default function Page() {
     };
     const {switchChain, isPending: switching} = useSwitchChain();
     const publicClient = usePublicClient();
+    const queryClient = useQueryClient();
     const {writeContractAsync} = useWriteContract();
 
     // wagmi can rehydrate a persisted session into a connector "shell" without
@@ -524,6 +526,9 @@ export default function Page() {
                 if (hash) {
                     setLastTx(hash);
                     await publicClient?.waitForTransactionReceipt({hash});
+                    // Refresh every polled read NOW instead of waiting out the
+                    // next poll tick — actions register instantly.
+                    void queryClient.invalidateQueries();
                 }
             } catch (err) {
                 console.error("[blackjack] action failed:", err);
@@ -539,7 +544,7 @@ export default function Page() {
                 setBusy(null);
             }
         },
-        [publicClient],
+        [publicClient, queryClient],
     );
 
     const onFaucet = () => run("faucet", () => writeTx({...chip, functionName: "faucet"}));

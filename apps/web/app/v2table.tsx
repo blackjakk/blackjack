@@ -2,6 +2,7 @@
 
 import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {usePublicClient, useReadContract, useReadContracts} from "wagmi";
+import {useQueryClient} from "@tanstack/react-query";
 import type {Address} from "viem";
 import {parseEther} from "viem";
 import {blackjackTableV2Abi, blackjackTableV3Abi, testChipAbi, drandRandomnessProviderAbi} from "@blackjack/config";
@@ -92,6 +93,7 @@ export function V2Table({
     writeBatch: WriteBatch;
 }) {
     const publicClient = usePublicClient();
+    const queryClient = useQueryClient();
     const tbl = {address: table, abi: isV3 ? blackjackTableV3Abi : blackjackTableV2Abi} as const;
     const chip = {address: token, abi: testChipAbi} as const;
     const zero = "0x0000000000000000000000000000000000000000" as const;
@@ -196,6 +198,9 @@ export function V2Table({
                 if (hash) {
                     setLastTx(hash);
                     await publicClient?.waitForTransactionReceipt({hash});
+                    // Refresh every polled read NOW instead of waiting out the
+                    // next poll tick — actions register instantly.
+                    void queryClient.invalidateQueries();
                 }
             } catch (err) {
                 const full = err instanceof Error ? err.message : String(err);
@@ -204,7 +209,7 @@ export function V2Table({
                 setBusy(null);
             }
         },
-        [publicClient],
+        [publicClient, queryClient],
     );
 
     const [wagerInput, setWagerInput] = useState("10");
@@ -277,16 +282,20 @@ export function V2Table({
             /AlreadyFulfilled/i,
         );
 
-    // Auto-reveal: one attempt per request id, as soon as its round publishes.
-    const autoTried = useRef<Set<string>>(new Set());
+    // Auto-reveal: as soon as a request's drand round publishes; RETRIES every
+    // 8 s while the request stays pending (a failed submit must not strand the
+    // hand until the keeper cron).
+    const autoTried = useRef<Map<string, number>>(new Map());
     useEffect(() => {
         if (busy) return;
         for (const {g} of awaitingGames) {
             const key = g.pendingRequestId.toString();
             const round = rounds[key];
-            if (!round || autoTried.current.has(key)) continue;
+            if (!round) continue;
             if (BigInt(now) < drandPublishTime(round)) continue;
-            autoTried.current.add(key);
+            const last = autoTried.current.get(key) ?? 0;
+            if (now - last < 8) continue;
+            autoTried.current.set(key, now);
             void onBeacon(g);
             break; // one at a time; the next poll picks up the rest
         }

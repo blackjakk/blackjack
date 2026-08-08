@@ -2,6 +2,7 @@
 
 import {useCallback, useEffect, useState} from "react";
 import {usePublicClient, useReadContract} from "wagmi";
+import {useQueryClient} from "@tanstack/react-query";
 import type {Address} from "viem";
 import {parseEther} from "viem";
 import {bankrollVaultAbi, sharedBankrollVaultAbi, testChipAbi} from "@blackjack/config";
@@ -46,6 +47,7 @@ export function VaultPanel({
     fundTarget?: Address;
 }) {
     const publicClient = usePublicClient();
+    const queryClient = useQueryClient();
     const shared = isSharedVault(vault);
     const v = {address: vault, abi: shared ? sharedBankrollVaultAbi : bankrollVaultAbi} as const;
     const erc20 = {address: token, abi: testChipAbi} as const;
@@ -111,7 +113,10 @@ export function VaultPanel({
             setError(null);
             try {
                 const hash = await fn();
-                if (hash) await publicClient?.waitForTransactionReceipt({hash});
+                if (hash) {
+                    await publicClient?.waitForTransactionReceipt({hash});
+                    void queryClient.invalidateQueries();
+                }
             } catch (err) {
                 const m = err instanceof Error ? err.message : String(err);
                 setError(
@@ -123,7 +128,7 @@ export function VaultPanel({
                 setBusy(null);
             }
         },
-        [publicClient],
+        [publicClient, queryClient],
     );
 
     const [depositInput, setDepositInput] = useState("");

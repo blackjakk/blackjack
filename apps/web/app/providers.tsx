@@ -24,6 +24,9 @@ const wagmiConfig = createConfig({
               ]
             : [injected()],
     transports: {[activeChain.id]: http()},
+    // MegaETH mini-blocks confirm in ~10 ms; viem's default 4 s receipt/watch
+    // polling would make every action FEEL 4 s slow. Poll fast instead.
+    pollingInterval: 250,
 });
 
 const queryClient = new QueryClient();
