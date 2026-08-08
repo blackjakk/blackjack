@@ -4,7 +4,7 @@ import {useMemo} from "react";
 import {useReadContract, useReadContracts} from "wagmi";
 import type {Address} from "viem";
 import {tableFactoryAbi, blackjackTableV2Abi} from "@blackjack/config";
-import {FACTORY_ADDRESS, V2_TABLES, hasV2} from "../lib/config.ts";
+import {FACTORY_ADDRESS, V2_TABLES, ASSET_TABLES, hasV2} from "../lib/config.ts";
 import {fmt} from "./ui.tsx";
 
 const POLL = {refetchInterval: 5000} as const;
@@ -48,13 +48,22 @@ export function Lobby({
     });
 
     const tables = useMemo(() => {
-        const curated = V2_TABLES.map((t) => ({...t, community: false}));
+        const curated = [
+            ...V2_TABLES.map((t) => ({...t, symbol: "CHIP", community: false})),
+            ...ASSET_TABLES.map((t) => ({
+                name: `${t.symbol} Classic (S17, 3:2, surrender)`,
+                address: t.table,
+                symbol: t.symbol,
+                community: false,
+            })),
+        ];
         const known = new Set(curated.map((t) => t.address.toLowerCase()));
         const extras = ((registry as readonly Address[] | undefined) ?? [])
             .filter((a) => !known.has(a.toLowerCase()))
             .map((a) => ({
                 name: `Community ${a.slice(0, 6)}…${a.slice(-4)}`,
                 address: a,
+                symbol: "CHIP",
                 community: true,
             }));
         return [...curated, ...extras];
@@ -104,7 +113,10 @@ export function Lobby({
                             </strong>
                             <span className="sub">{rules ? rulesSummary(rules) : "…"}</span>
                             <span className="sub">
-                                bets {fmt(min)}–{fmt(max)} · bankroll {fmt(liq?.[0])} CHIP
+                                bets {fmt(min)}–{fmt(max)} · bankroll {fmt(liq?.[0])} {t.symbol}
+                                {liq !== undefined && liq[0] === 0n
+                                    ? " · 🏦 empty — be the first LP!"
+                                    : ""}
                                 {t.community ? " · unvetted community table" : ""}
                             </span>
                         </button>

@@ -59,3 +59,18 @@ export const FACTORY_ADDRESS = (process.env.NEXT_PUBLIC_FACTORY_ADDRESS ??
 export const V2_TABLES: {name: string; address: Address}[] = live?.v2Tables ?? [];
 
 export const hasV2 = (FACTORY_ADDRESS as string).length === 42;
+
+/** table (lowercase) -> its BankrollVault. */
+export const VAULTS: Record<string, Address> = Object.fromEntries(
+    (live?.vaults ?? []).map((v) => [v.table.toLowerCase(), v.vault]),
+);
+
+/** Real-asset tables (USDm / ETH-as-WETH / MEGA), each with its own vault. */
+export const ASSET_TABLES = live?.assetTables ?? [];
+
+/** Wager token + display symbol for any known table. */
+export function tableToken(table: string): {token: Address; symbol: string} {
+    const at = ASSET_TABLES.find((t) => t.table.toLowerCase() === table.toLowerCase());
+    if (at) return {token: at.token, symbol: at.symbol};
+    return {token: CHIP_ADDRESS, symbol: "CHIP"};
+}

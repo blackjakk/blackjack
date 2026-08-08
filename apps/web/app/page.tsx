@@ -45,6 +45,9 @@ import {
     txUrl,
     BUILD_ID,
     V2_TABLES,
+    ASSET_TABLES,
+    VAULTS,
+    tableToken,
     hasV2,
 } from "../lib/config.ts";
 
@@ -952,11 +955,20 @@ export default function Page() {
                 <V2Table
                     key={tableChoice}
                     table={tableChoice as `0x${string}`}
-                    name={V2_TABLES.find((t) => t.address === tableChoice)?.name ?? "Community table"}
+                    name={
+                        V2_TABLES.find((t) => t.address === tableChoice)?.name ??
+                        ASSET_TABLES.find((t) => t.table === tableChoice)?.symbol.concat(
+                            " Classic",
+                        ) ??
+                        "Community table"
+                    }
                     address={address}
                     isConnected={isConnected && !wrongNetwork}
                     oneClickActive={grantCovers(tableChoice as string)}
                     isMoss={isMoss}
+                    token={tableToken(tableChoice as string).token}
+                    symbol={tableToken(tableChoice as string).symbol}
+                    vault={VAULTS[(tableChoice as string).toLowerCase()]}
                     writeTx={(a) => writeTx(a as Parameters<typeof writeContractAsync>[0])}
                     writeBatch={writeBatch}
                 />

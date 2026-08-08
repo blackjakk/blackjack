@@ -14,7 +14,8 @@ import {
     OutcomeNames,
     fetchBeaconSignature,
 } from "@blackjack/sdk";
-import {CHIP_ADDRESS, PROVIDER_ADDRESS, txUrl} from "../lib/config.ts";
+import {PROVIDER_ADDRESS, txUrl} from "../lib/config.ts";
+import {VaultPanel} from "./vault.tsx";
 import {CardView, TotalBadge, fmt} from "./ui.tsx";
 import {rulesSummary} from "./lobby.tsx";
 
@@ -62,6 +63,9 @@ export function V2Table({
     isConnected,
     oneClickActive,
     isMoss,
+    token,
+    symbol,
+    vault,
     writeTx,
     writeBatch,
 }: {
@@ -71,12 +75,15 @@ export function V2Table({
     isConnected: boolean;
     oneClickActive: boolean;
     isMoss: boolean;
+    token: Address;
+    symbol: string;
+    vault: Address | undefined;
     writeTx: WriteTx;
     writeBatch: WriteBatch;
 }) {
     const publicClient = usePublicClient();
     const tbl = {address: table, abi: blackjackTableV2Abi} as const;
-    const chip = {address: CHIP_ADDRESS, abi: testChipAbi} as const;
+    const chip = {address: token, abi: testChipAbi} as const;
     const zero = "0x0000000000000000000000000000000000000000" as const;
 
     const {data: rules} = useReadContract({...tbl, functionName: "rules"});
@@ -247,17 +254,6 @@ export function V2Table({
             /AlreadyFulfilled/i,
         );
 
-    const [fundInput, setFundInput] = useState("");
-    const onFund = () =>
-        run("fund", async () => {
-            const amount = parseEther(fundInput || "0");
-            if (amount === 0n) return null;
-            setFundInput("");
-            return writeBatch(
-                await callsWithAllowance(amount, {...tbl, functionName: "fundHouse", args: [amount]}),
-            );
-        });
-
     // Auto-reveal: one attempt per request id, as soon as its round publishes.
     const autoTried = useRef<Set<string>>(new Set());
     useEffect(() => {
@@ -304,27 +300,19 @@ export function V2Table({
                         available {fmt(liquidity?.[2])} {paused ? " · ⏸ paused" : ""}
                     </div>
                 </div>
-                {isConnected && (
-                    <div className="row" style={{marginTop: 10}}>
-                        <span className="status">
-                            Anyone can add bankroll to this table (donation until LP shares exist):
-                        </span>
-                        <span className="row" style={{gap: 6}}>
-                            <input
-                                value={fundInput}
-                                onChange={(e) => setFundInput(e.target.value)}
-                                inputMode="decimal"
-                                placeholder="CHIP"
-                                style={{width: 90}}
-                                aria-label="liquidity amount in CHIP"
-                            />
-                            <button className="secondary" disabled={!!busy} onClick={onFund}>
-                                {busy === "fund" ? "…" : "Add liquidity"}
-                            </button>
-                        </span>
-                    </div>
-                )}
             </div>
+
+            {vault && (
+                <VaultPanel
+                    vault={vault}
+                    token={token}
+                    symbol={symbol}
+                    address={address}
+                    isConnected={isConnected}
+                    writeTx={writeTx}
+                    writeBatch={writeBatch}
+                />
+            )}
 
             {shownIds.length === 0 && (
                 <div className="panel status">
@@ -357,7 +345,7 @@ export function V2Table({
                         <div className="row">
                             <div className="hand-title">
                                 Hand #{id.toString()} · wager{" "}
-                                {fmt(g.doubled ? g.wager * 2n : g.wager)} CHIP
+                                {fmt(g.doubled ? g.wager * 2n : g.wager)} {symbol}
                                 {g.doubled ? " (doubled)" : ""}
                             </div>
                         </div>
@@ -452,7 +440,7 @@ export function V2Table({
                             value={wagerInput}
                             onChange={(e) => setWagerInput(e.target.value)}
                             inputMode="decimal"
-                            aria-label="wager in CHIP"
+                            aria-label={`wager in ${symbol}`}
                             style={{width: 90}}
                         />
                         <button disabled={!!busy} onClick={onBet}>

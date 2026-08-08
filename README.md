@@ -71,6 +71,16 @@ plus any community tables created through the permissionless onchain
 deposits** (`fundHouse`) — LP shares are on the roadmap. The original v1
 single-hand table remains available.
 
+## LP vaults (be the house)
+
+Every table's bankroll is an ERC-4626 `BankrollVault` — and the vault is the
+table's ONLY treasury (deployer withdrawal rights revoked). Deposit the
+table's currency for LP shares; share price tracks house wins/losses. Exits
+are a delayed queue (request → 1 h → claim at claim-time price) so pending
+beacon knowledge can't be monetized. Tables run in CHIP plus real testnet
+assets: USDm, ETH (canonical WETH) and MEGA — the USDm/MEGA tables launch
+empty and wait for their first LPs. Play money; unaudited.
+
 ## Wallets
 
 The web app offers two ways to connect:
