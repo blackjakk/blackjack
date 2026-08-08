@@ -30,9 +30,10 @@ import {
 } from "@blackjack/sdk";
 import {drandPublishTime} from "@blackjack/config";
 import {Chat} from "./chat.tsx";
-import {CardView, fmt} from "./ui.tsx";
+import {CardView, TotalBadge, fmt} from "./ui.tsx";
 import {Lobby, type TableChoice} from "./lobby.tsx";
 import {V2Table} from "./v2table.tsx";
+import {StatsPanel} from "./stats.tsx";
 import {
     TABLE_ADDRESS,
     CHIP_ADDRESS,
@@ -961,9 +962,16 @@ export default function Page() {
                 />
             ) : (
             <>
-            <div className="panel">
+            <div className="panel felt">
                 <div className="hand-title">
-                    Dealer {dealerCards.length > 0 && `— ${dealerVal.total}${dealerVal.soft ? " (soft)" : ""}`}
+                    Dealer
+                    {dealerCards.length > 0 && (
+                        <TotalBadge
+                            total={dealerVal.total}
+                            soft={dealerVal.soft}
+                            bust={dealerVal.total > 21}
+                        />
+                    )}
                 </div>
                 <div className="cards">
                     {dealerCards.map((c, i) => <CardView key={i} card={c} />)}
@@ -972,7 +980,14 @@ export default function Page() {
                 </div>
 
                 <div className="hand-title" style={{marginTop: 16}}>
-                    You {playerCards.length > 0 && `— ${playerVal.total}${playerVal.soft ? " (soft)" : ""}`}
+                    You
+                    {playerCards.length > 0 && (
+                        <TotalBadge
+                            total={playerVal.total}
+                            soft={playerVal.soft}
+                            bust={playerVal.total > 21}
+                        />
+                    )}
                     {game && game.doubled ? " · doubled" : ""}
                     {game ? ` · wager ${fmt(game.doubled ? game.wager * 2n : game.wager)} CHIP` : ""}
                 </div>
@@ -1091,6 +1106,8 @@ export default function Page() {
             )}
             </>
             )}
+
+            <StatsPanel address={address} />
 
             <Chat />
 

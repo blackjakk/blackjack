@@ -15,7 +15,7 @@ import {
     fetchBeaconSignature,
 } from "@blackjack/sdk";
 import {CHIP_ADDRESS, PROVIDER_ADDRESS, txUrl} from "../lib/config.ts";
-import {CardView, fmt} from "./ui.tsx";
+import {CardView, TotalBadge, fmt} from "./ui.tsx";
 import {rulesSummary} from "./lobby.tsx";
 
 const POLL = {refetchInterval: 1500} as const;
@@ -353,7 +353,7 @@ export function V2Table({
                           : "lose";
 
                 return (
-                    <div className="panel" key={id.toString()}>
+                    <div className="panel felt" key={id.toString()}>
                         <div className="row">
                             <div className="hand-title">
                                 Hand #{id.toString()} · wager{" "}
@@ -362,8 +362,10 @@ export function V2Table({
                             </div>
                         </div>
                         <div className="hand-title" style={{marginTop: 8}}>
-                            Dealer{" "}
-                            {dealerCards.length > 0 && `— ${dv.total}${dv.soft ? " (soft)" : ""}`}
+                            Dealer
+                            {dealerCards.length > 0 && (
+                                <TotalBadge total={dv.total} soft={dv.soft} bust={dv.total > 21} />
+                            )}
                         </div>
                         <div className="cards">
                             {dealerCards.map((c, j) => (
@@ -373,7 +375,10 @@ export function V2Table({
                             {dealerCards.length === 0 && <span className="status">no cards yet</span>}
                         </div>
                         <div className="hand-title" style={{marginTop: 8}}>
-                            You {playerCards.length > 0 && `— ${pv.total}${pv.soft ? " (soft)" : ""}`}
+                            You
+                            {playerCards.length > 0 && (
+                                <TotalBadge total={pv.total} soft={pv.soft} bust={pv.total > 21} />
+                            )}
                         </div>
                         <div className="cards">
                             {playerCards.map((c, j) => (
