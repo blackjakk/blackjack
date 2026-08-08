@@ -74,6 +74,17 @@ type MossTxResult = {
 
 
 
+/** Solc ABIs carry `internalType` ("enum InfiniteBlackjack.Action") alongside the
+ * canonical `type` ("uint8"). MOSS's policy engine matches silent calls against
+ * granted canonical signatures like `act(uint8,uint8)`; a signature derived from
+ * internalType can never match one, which downgrades a covered call to a surprise
+ * approval popup. Hand the wallet an internalType-free ABI so the computed
+ * signature is always canonical. */
+const mossAbi = (abi: unknown): unknown =>
+    JSON.parse(JSON.stringify(abi), (key, value: unknown) =>
+        key === "internalType" ? undefined : value,
+    );
+
 const MOSS_BOOT_FAILURE = /did not respond|Failed to establish a connection to the MegaETH wallet/i;
 
 /** Translate known wallet errors into something actionable. */
@@ -243,7 +254,7 @@ export default function Page() {
                         params: [
                             {
                                 address: args.address,
-                                abi: args.abi,
+                                abi: mossAbi(args.abi),
                                 functionName: args.functionName,
                                 args: args.args ?? [],
                                 silent: true,
@@ -301,7 +312,7 @@ export default function Page() {
                         params: [
                             calls.map((c) => ({
                                 address: c.address,
-                                abi: c.abi,
+                                abi: mossAbi(c.abi),
                                 functionName: c.functionName,
                                 args: c.args ?? [],
                                 ...(silent ? {silent: true, silentUIApproveFallback: true} : {}),
