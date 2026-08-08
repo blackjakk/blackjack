@@ -73,3 +73,29 @@ without changing the state machine.
   equals the doubled-win ceiling.
 * ENHC: a dealer natural takes both stakes; if both hands bust, the dealer
   never draws.
+
+## Infinite tables (shared multiplayer rounds)
+
+* One common round: every player who bets during the betting window shares the
+  SAME two starting cards and dealer up-card (beacon #1, requested only after
+  betting closes).
+* Each player then commits exactly ONE play before beacon #2 exists:
+  * **stand**;
+  * **hit to a target T (12–21)** — draw until the hand's best total reaches T
+    or busts (the committed form of hitting; per-card decisions would leak the
+    next card, so they don't exist here);
+  * **double** (one card, second wager escrowed at commit time);
+  * **surrender** (if the table allows it).
+  No commitment by the decision deadline = stand, so an AFK player can never
+  stall the table.
+* Beacon #2 is requested only after decisions lock; every player's draw cards
+  come from their own derivation stream of it (`keccak(seed, player)`) and the
+  dealer's from `keccak(seed)`. One beacon pair serves any number of players.
+* Outcomes and payouts per seat match the v2 table exactly (same ENHC rules,
+  same 2x-wager liability reservation). A bust settles as PLAYER_BUST even when
+  the dealer later shows a natural (same money). Surrender returns half the
+  wager even against a dealer natural — the same player-friendly surrender the
+  v2 tables settle early (documented deviation from live ENHC).
+* Settlement and refunds are permissionless paginated sweeps; a payout whose
+  token transfer fails is parked as a deferred credit (`withdrawDeferred`)
+  instead of blocking the seats behind it.

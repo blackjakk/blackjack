@@ -60,10 +60,25 @@ export const V2_TABLES: {name: string; address: Address}[] = live?.v2Tables ?? [
 
 export const hasV2 = (FACTORY_ADDRESS as string).length === 42;
 
-/** table (lowercase) -> its BankrollVault. */
-export const VAULTS: Record<string, Address> = Object.fromEntries(
-    (live?.vaults ?? []).map((v) => [v.table.toLowerCase(), v.vault]),
-);
+/** Phase D: per-asset SHARED vaults (one pool backs every game of the asset). */
+export const SHARED_VAULTS = live?.sharedVaults ?? [];
+
+/** Phase D: shared multiplayer Infinite tables, one per asset. */
+export const INFINITE_TABLES = live?.infiniteTables ?? [];
+
+export function isInfiniteTable(table: string): boolean {
+    return INFINITE_TABLES.some((t) => t.address.toLowerCase() === table.toLowerCase());
+}
+
+export function isSharedVault(vault: string): boolean {
+    return SHARED_VAULTS.some((v) => v.vault.toLowerCase() === vault.toLowerCase());
+}
+
+/** table (lowercase) -> its vault (legacy per-table vaults + shared-pool members). */
+export const VAULTS: Record<string, Address> = Object.fromEntries([
+    ...(live?.vaults ?? []).map((v) => [v.table.toLowerCase(), v.vault] as const),
+    ...SHARED_VAULTS.flatMap((s) => s.tables.map((t) => [t.toLowerCase(), s.vault] as const)),
+]);
 
 /** Real-asset tables (USDm / ETH-as-WETH / MEGA), each with its own vault. */
 export const ASSET_TABLES = live?.assetTables ?? [];

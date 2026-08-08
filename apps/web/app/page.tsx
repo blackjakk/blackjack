@@ -33,6 +33,7 @@ import {Chat} from "./chat.tsx";
 import {CardView, TotalBadge, fmt} from "./ui.tsx";
 import {Lobby, type TableChoice} from "./lobby.tsx";
 import {V2Table} from "./v2table.tsx";
+import {InfiniteTable} from "./infinite.tsx";
 import {StatsPanel} from "./stats.tsx";
 import {
     TABLE_ADDRESS,
@@ -50,6 +51,8 @@ import {
     VAULTS,
     tableToken,
     isV3Table,
+    isInfiniteTable,
+    INFINITE_TABLES,
     hasV2,
 } from "../lib/config.ts";
 
@@ -552,18 +555,30 @@ export default function Page() {
                       {to: target, signature: "double()"},
                       {to: target, signature: "cancelTimedOutGame(uint256)"},
                   ]
-                : [
-                      {to: target, signature: "placeBet(uint256)"},
-                      {to: target, signature: "hit(uint256)"},
-                      {to: target, signature: "stand(uint256)"},
-                      {to: target, signature: "double(uint256)"},
-                      {to: target, signature: "surrender(uint256)"},
-                      {to: target, signature: "cancelTimedOutGame(uint256)"},
-                      {to: target, signature: "fundHouse(uint256)"},
-                      ...(isV3Table(target)
-                          ? [{to: target, signature: "split(uint256)"}]
-                          : []),
-                  ];
+                : isInfiniteTable(target)
+                  ? [
+                        {to: target, signature: "placeBet(uint256)"},
+                        {to: target, signature: "act(uint8,uint8)"},
+                        {to: target, signature: "lockDeal()"},
+                        {to: target, signature: "lockActions()"},
+                        {to: target, signature: "settle(uint256)"},
+                        {to: target, signature: "cancelRound(uint256)"},
+                        {to: target, signature: "refund(uint256,uint256)"},
+                        {to: target, signature: "withdrawDeferred()"},
+                        {to: target, signature: "fundHouse(uint256)"},
+                    ]
+                  : [
+                        {to: target, signature: "placeBet(uint256)"},
+                        {to: target, signature: "hit(uint256)"},
+                        {to: target, signature: "stand(uint256)"},
+                        {to: target, signature: "double(uint256)"},
+                        {to: target, signature: "surrender(uint256)"},
+                        {to: target, signature: "cancelTimedOutGame(uint256)"},
+                        {to: target, signature: "fundHouse(uint256)"},
+                        ...(isV3Table(target)
+                            ? [{to: target, signature: "split(uint256)"}]
+                            : []),
+                    ];
             const request = provider.request({
                 method: "wallet_grantPermissions",
                 params: [
@@ -956,7 +971,24 @@ export default function Page() {
                 </div>
             )}
 
-            {tableChoice !== "v1" && address !== undefined || tableChoice !== "v1" ? (
+            {tableChoice !== "v1" && isInfiniteTable(tableChoice as string) ? (
+                <InfiniteTable
+                    key={tableChoice}
+                    table={tableChoice as `0x${string}`}
+                    name={
+                        INFINITE_TABLES.find(
+                            (t) => t.address.toLowerCase() === (tableChoice as string).toLowerCase(),
+                        )?.symbol.concat(" Infinite — shared table") ?? "Infinite table"
+                    }
+                    address={address}
+                    isConnected={isConnected && !wrongNetwork}
+                    token={tableToken(tableChoice as string).token}
+                    symbol={tableToken(tableChoice as string).symbol}
+                    vault={VAULTS[(tableChoice as string).toLowerCase()]}
+                    writeTx={(a) => writeTx(a as Parameters<typeof writeContractAsync>[0])}
+                    writeBatch={writeBatch}
+                />
+            ) : tableChoice !== "v1" && address !== undefined || tableChoice !== "v1" ? (
                 <V2Table
                     key={tableChoice}
                     table={tableChoice as `0x${string}`}

@@ -334,6 +334,7 @@ export function V2Table({
                     isConnected={isConnected}
                     writeTx={writeTx}
                     writeBatch={writeBatch}
+                    fundTarget={table}
                 />
             )}
 

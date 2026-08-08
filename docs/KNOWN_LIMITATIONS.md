@@ -54,3 +54,21 @@
     beacon cannot be monetized by exiting. Residual: claims can be
     temporarily blocked while liabilities are reserved; retry after
     settlement.
+15. **Shared-vault membership is an admin power (documented trust point).**
+    A SharedBankrollVault's DEFAULT_ADMIN_ROLE decides which game tables the
+    pool backs. A malicious or buggy member table would poison the WHOLE
+    asset pool (totalAssets sums member houseFunds), so membership must only
+    ever be verified game code; today that judgment rests with the deployer
+    key, and this role is the natural first thing a future governance token
+    takes over. `addTable` checks the vault actually holds the table's
+    treasury role and that assets match; it cannot verify code intent.
+16. **Infinite rounds need a driver.** lockDeal/lockActions/settle/refund are
+    permissionless; player frontends auto-drive their own rounds and the
+    keeper cron is the backstop (same liveness class as beacon fulfillment,
+    limitation 2/3). Worst case a stuck round is cancellable for full refunds
+    after the randomness timeout.
+17. **Hit-to-target only on shared rounds.** Per-card hit decisions on a
+    shared draw beacon would let players see their next card before deciding;
+    the committed hit-to-target strategy is the sound (and standard-strategy-
+    expressible) alternative. Play style is slightly less granular than the
+    per-hand tables.

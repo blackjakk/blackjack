@@ -4,7 +4,8 @@ import {useCallback, useEffect, useState} from "react";
 import {usePublicClient, useReadContract} from "wagmi";
 import type {Address} from "viem";
 import {parseEther} from "viem";
-import {bankrollVaultAbi, testChipAbi} from "@blackjack/config";
+import {bankrollVaultAbi, sharedBankrollVaultAbi, testChipAbi} from "@blackjack/config";
+import {isSharedVault} from "../lib/config.ts";
 import {fmt} from "./ui.tsx";
 
 const POLL = {refetchInterval: 4000} as const;
@@ -19,8 +20,11 @@ type WriteBatch = (calls: Call[]) => Promise<`0x${string}`>;
 type WriteTx = (args: Call) => Promise<`0x${string}`>;
 
 /**
- * LP panel for one table's BankrollVault: deposit (instant), exit via the
- * delayed queue (request -> 1h -> claim at claim-time price).
+ * LP panel for a BankrollVault (one table) or a SharedBankrollVault (one pool
+ * backing every game of the asset): deposit (instant), exit via the delayed
+ * queue (request -> 1h -> claim at claim-time price). Shared-pool deposits stay
+ * idle in the vault, so the deposit batch chains a permissionless fundTable
+ * push into `fundTarget` (the table being viewed) to put them to work.
  */
 export function VaultPanel({
     vault,
@@ -30,6 +34,7 @@ export function VaultPanel({
     isConnected,
     writeTx,
     writeBatch,
+    fundTarget,
 }: {
     vault: Address;
     token: Address;
@@ -38,9 +43,11 @@ export function VaultPanel({
     isConnected: boolean;
     writeTx: WriteTx;
     writeBatch: WriteBatch;
+    fundTarget?: Address;
 }) {
     const publicClient = usePublicClient();
-    const v = {address: vault, abi: bankrollVaultAbi} as const;
+    const shared = isSharedVault(vault);
+    const v = {address: vault, abi: shared ? sharedBankrollVaultAbi : bankrollVaultAbi} as const;
     const erc20 = {address: token, abi: testChipAbi} as const;
     const zero = "0x0000000000000000000000000000000000000000" as const;
 
@@ -123,6 +130,9 @@ export function VaultPanel({
                 calls.push({...erc20, functionName: "approve", args: [vault, amount]});
             }
             calls.push({...v, functionName: "deposit", args: [amount, address!]});
+            if (shared && fundTarget) {
+                calls.push({...v, functionName: "fundTable", args: [fundTarget, amount]});
+            }
             setDepositInput("");
             return writeBatch(calls);
         });
@@ -145,16 +155,22 @@ export function VaultPanel({
     return (
         <div className="panel">
             <div className="row">
-                <div className="hand-title">🏦 Bankroll vault — be the house</div>
+                <div className="hand-title">
+                    {shared ? `🏦 ${symbol} house pool — be the house` : "🏦 Bankroll vault — be the house"}
+                </div>
                 <span className="status">
                     TVL {fmt(totalAssets as bigint | undefined)} {symbol}
                 </span>
             </div>
             <div className="status" style={{marginTop: 6}}>
-                Deposit {symbol} for LP shares of this table&apos;s bankroll: every hand the
-                house wins raises your share value, every player win lowers it. Exits are a
-                two-step queue (request → 1 h wait → claim at the then-current price) so
-                nobody can dodge a loss they saw coming. Play money — unaudited.
+                {shared
+                    ? `Deposit ${symbol} for LP shares of the SHARED ${symbol} bankroll — one
+                       pool backs every ${symbol} game here (classic, infinite, and future
+                       tables), so wins and losses at any of them move the same share price.`
+                    : `Deposit ${symbol} for LP shares of this table's bankroll: every hand
+                       the house wins raises your share value, every player win lowers it.`}{" "}
+                Exits are a two-step queue (request → 1 h wait → claim at the then-current
+                price) so nobody can dodge a loss they saw coming. Play money — unaudited.
             </div>
 
             {isConnected && (

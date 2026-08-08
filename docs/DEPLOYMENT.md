@@ -163,3 +163,25 @@ V3 engine (split pairs): TableFactoryV3 `0xEF80C2BDAF12059c0e750C6F19E88ed76c951
 "Split" CHIP table `0x1d8DD0B8D825c939024582f31Dc512955187Dc2E` (S17, 3:2, split,
 surrender; 200k CHIP via delayed vault `0xa103a0B75b591d77f32b479bdaD2869dc7F222B2`).
 All Sourcify exact_match. 174 tests incl. 11 split scenarios + V3 invariants.
+
+### Phase D rollout — 2026-08-08 (chain 6343): Infinite tables + shared per-asset pools
+
+One shared multiplayer `InfiniteBlackjack` table per asset (S17, 3:2, double any
+two, surrender; 45 s betting window, 40 s decision window, auto-stand) and one
+`SharedBankrollVault` per asset (1 h exit queue) backing every member game of
+that asset. All Sourcify exact_match.
+
+| Asset | Infinite table | Shared pool (hp*) | Member tables |
+| --- | --- | --- | --- |
+| CHIP | `0x9103B9723e5BffbBcD70Bfb0785AADF64E2D0E35` | `0xDD796fb9BfDCAb8210884Ccc8634B8f8a2324Bc0` | Infinite (200k CHIP seed) |
+| USDm | `0x70D3f02A850c197Bc339ba9F8530aBcCb4217Aac` | `0x8F88B2FfDEF4F79f9a7C7Ac3429b4A0439965c2E` | Infinite + USDm classic (re-pointed) |
+| ETH | `0xb25Fd4A3dEFF1926e6B17B1fF8Eb2beBDd807286` | `0x6558427457B8bf3C36Ab1E1be88F2a5223cd55D4` | Infinite (classic joins after legacy exit matures) |
+| MEGA | `0x6EF4dEf337D24631efEe0e0ffb145Ef835430644` | `0x03C399f63755e04f4E3D56a92972d3f37e93a51C` | Infinite + MEGA classic (re-pointed) |
+
+Migration notes, all verified onchain before acting: legacy bjUSDm/bjMEGA vaults
+held ZERO LP shares, so their classic tables were re-pointed directly (legacy
+treasury roles revoked). bjETH's sole LP is the deployer (0.25 WETH): its delayed
+exit was requested in the deploy tx and `FinishEthMigration` completes the move
+after the 1 h queue. Legacy CHIP per-table vaults (Classic/Vegas/Pro/Split) keep
+their tables and stay fully functional — their LPs migrate self-serve
+(requestRedeem there, deposit into hpCHIP) whenever they choose.

@@ -32,6 +32,14 @@ export interface BlackjackDeployment {
         table: Address;
         vault: Address;
     }[];
+    /** Phase D: shared multiplayer InfiniteBlackjack tables, one per asset. */
+    infiniteTables?: {symbol: string; token: Address; address: Address}[];
+    /**
+     * Phase D: per-asset SHARED vaults (SharedBankrollVault) — one pool backing
+     * every member game of that asset. Tables listed here override the per-table
+     * `vaults` mapping.
+     */
+    sharedVaults?: {symbol: string; token: Address; vault: Address; tables: Address[]}[];
 }
 
 /**
@@ -67,16 +75,34 @@ export const DEPLOYMENTS: Partial<Record<number, BlackjackDeployment>> = {
             {table: "0x457e5eb30973af0654aE3f6b5E1ba62d5c97C1cF", vault: "0x87B20cb956d9fD3fEec2281163FFB80B7D43D3c7"},
             {table: "0xe4eDc43D1cD0cC5370fAB275EcB1c50C1CC0b6Ee", vault: "0x7cb6F0e70745507DdBa4b31Fe9CB8698473512A5"},
             {table: "0xb414D2B3AAe5Da85813Ea3680895a457e0a08577", vault: "0xb0a6AC3013e804031984f01c61313EfbcEa6faD2"},
-            {table: "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003", vault: "0x196A8Fd97409c1e1e194F05BB5e0d6D00232e20D"},
+            // ETH classic stays on its legacy vault until the hpETH migration
+            // completes (delayed exit in flight); USDm/MEGA moved to shared pools.
             {table: "0x756595C7d4e3d2668700d0f3d72CDC377b66d116", vault: "0xB3A0E5faec83091252da443E65E28C855440ef2c"},
-            {table: "0x480F77B89B498DD995B72FE9672053836983D272", vault: "0xf853bEda69B48Dd6Cb5A84Fa64f00e503bcE7F26"},
         ],
         // Real testnet assets (verified onchain + docs 2026-08-08). No faucets for
         // USDm/MEGA — those tables start empty and wait for their first LPs.
         assetTables: [
-            {symbol: "USDm", token: "0x15e9f2B0A747aC05c7446559306687085D161e5C", factory: "0x028bb44f8a1DB4987F71E232C2F57e37B7dcA914", table: "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003", vault: "0x196A8Fd97409c1e1e194F05BB5e0d6D00232e20D"},
+            {symbol: "USDm", token: "0x15e9f2B0A747aC05c7446559306687085D161e5C", factory: "0x028bb44f8a1DB4987F71E232C2F57e37B7dcA914", table: "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003", vault: "0x8F88B2FfDEF4F79f9a7C7Ac3429b4A0439965c2E"},
             {symbol: "ETH", token: "0x4200000000000000000000000000000000000006", factory: "0x8aCf4D5A48a7ef95e3e0ae03c2385A49B1D6c4a5", table: "0x756595C7d4e3d2668700d0f3d72CDC377b66d116", vault: "0xB3A0E5faec83091252da443E65E28C855440ef2c"},
-            {symbol: "MEGA", token: "0xc903c68C1d389CEd76fEe0349067a4295828e6c2", factory: "0xf865FA56a56C56F9BD9601a4B812bE0F4A5634a3", table: "0x480F77B89B498DD995B72FE9672053836983D272", vault: "0xf853bEda69B48Dd6Cb5A84Fa64f00e503bcE7F26"},
+            {symbol: "MEGA", token: "0xc903c68C1d389CEd76fEe0349067a4295828e6c2", factory: "0xf865FA56a56C56F9BD9601a4B812bE0F4A5634a3", table: "0x480F77B89B498DD995B72FE9672053836983D272", vault: "0x03C399f63755e04f4E3D56a92972d3f37e93a51C"},
+        ],
+        // Phase D (2026-08-08): shared multiplayer tables, one per asset, all
+        // Sourcify exact_match. One drand beacon pair serves every player in a round.
+        infiniteTables: [
+            {symbol: "CHIP", token: "0x31E4261aF4Ed630E78d7438Ebcb25Ca7c3c15711", address: "0x9103B9723e5BffbBcD70Bfb0785AADF64E2D0E35"},
+            {symbol: "USDm", token: "0x15e9f2B0A747aC05c7446559306687085D161e5C", address: "0x70D3f02A850c197Bc339ba9F8530aBcCb4217Aac"},
+            {symbol: "ETH", token: "0x4200000000000000000000000000000000000006", address: "0xb25Fd4A3dEFF1926e6B17B1fF8Eb2beBDd807286"},
+            {symbol: "MEGA", token: "0xc903c68C1d389CEd76fEe0349067a4295828e6c2", address: "0x6EF4dEf337D24631efEe0e0ffb145Ef835430644"},
+        ],
+        // Phase D: one SHARED vault per asset (hp*) backing every member game of
+        // that asset. USDm/MEGA classic tables re-pointed (legacy vaults had zero
+        // LPs, verified onchain); ETH classic joins hpETH once its delayed exit
+        // from the legacy vault matures.
+        sharedVaults: [
+            {symbol: "CHIP", token: "0x31E4261aF4Ed630E78d7438Ebcb25Ca7c3c15711", vault: "0xDD796fb9BfDCAb8210884Ccc8634B8f8a2324Bc0", tables: ["0x9103B9723e5BffbBcD70Bfb0785AADF64E2D0E35"]},
+            {symbol: "USDm", token: "0x15e9f2B0A747aC05c7446559306687085D161e5C", vault: "0x8F88B2FfDEF4F79f9a7C7Ac3429b4A0439965c2E", tables: ["0x70D3f02A850c197Bc339ba9F8530aBcCb4217Aac", "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003"]},
+            {symbol: "ETH", token: "0x4200000000000000000000000000000000000006", vault: "0x6558427457B8bf3C36Ab1E1be88F2a5223cd55D4", tables: ["0xb25Fd4A3dEFF1926e6B17B1fF8Eb2beBDd807286"]},
+            {symbol: "MEGA", token: "0xc903c68C1d389CEd76fEe0349067a4295828e6c2", vault: "0x03C399f63755e04f4E3D56a92972d3f37e93a51C", tables: ["0x6EF4dEf337D24631efEe0e0ffb145Ef835430644", "0x480F77B89B498DD995B72FE9672053836983D272"]},
         ],
     },
 };
