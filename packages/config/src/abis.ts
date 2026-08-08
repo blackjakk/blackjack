@@ -4521,6 +4521,11 @@ export const bankrollVaultAbi = [
         "internalType": "contract BlackjackTableV2"
       },
       {
+        "name": "withdrawDelay_",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
         "name": "name_",
         "type": "string",
         "internalType": "string"
@@ -4615,6 +4620,25 @@ export const bankrollVaultAbi = [
   },
   {
     "type": "function",
+    "name": "claim",
+    "inputs": [
+      {
+        "name": "receiver",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "assets",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "convertToAssets",
     "inputs": [
       {
@@ -4690,6 +4714,30 @@ export const bankrollVaultAbi = [
   },
   {
     "type": "function",
+    "name": "exitRequests",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "shares",
+        "type": "uint192",
+        "internalType": "uint192"
+      },
+      {
+        "name": "claimableAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "maxDeposit",
     "inputs": [
       {
@@ -4731,7 +4779,7 @@ export const bankrollVaultAbi = [
     "name": "maxRedeem",
     "inputs": [
       {
-        "name": "owner",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -4743,14 +4791,14 @@ export const bankrollVaultAbi = [
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "pure"
   },
   {
     "type": "function",
     "name": "maxWithdraw",
     "inputs": [
       {
-        "name": "owner",
+        "name": "",
         "type": "address",
         "internalType": "address"
       }
@@ -4762,7 +4810,7 @@ export const bankrollVaultAbi = [
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "stateMutability": "pure"
   },
   {
     "type": "function",
@@ -4908,6 +4956,19 @@ export const bankrollVaultAbi = [
   },
   {
     "type": "function",
+    "name": "requestRedeem",
+    "inputs": [
+      {
+        "name": "shares",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "symbol",
     "inputs": [],
     "outputs": [
@@ -5041,6 +5102,19 @@ export const bankrollVaultAbi = [
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "withdrawDelay",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "Approval",
     "inputs": [
@@ -5092,6 +5166,62 @@ export const bankrollVaultAbi = [
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ExitClaimed",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "receiver",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "shares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "assets",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ExitRequested",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "shares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "claimableAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -5335,6 +5465,27 @@ export const bankrollVaultAbi = [
   },
   {
     "type": "error",
+    "name": "InvalidDelay",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotClaimableYet",
+    "inputs": [
+      {
+        "name": "claimableAt",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NothingRequested",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SafeERC20FailedOperation",
     "inputs": [
       {
@@ -5343,6 +5494,11 @@ export const bankrollVaultAbi = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "UseExitQueue",
+    "inputs": []
   }
 ] as const;
 

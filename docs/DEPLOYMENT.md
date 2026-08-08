@@ -148,3 +148,11 @@ Real-asset tokens verified onchain + docs 2026-08-08: USDm
 factories: USDm `0x028b…A914`, ETH `0x8aCf…c4a5`, MEGA `0xf865…34a3`.
 LP free-look window (exit-timing around a computable pending beacon) is
 documented in KNOWN_LIMITATIONS.
+
+### Delayed-exit migration — 2026-08-08 (supersedes the instant-exit vaults)
+
+v1 instant-exit vaults unwound and replaced; treasury roles moved to the
+delayed vaults (1 h exit queue, price struck at claim). All Sourcify
+exact_match: bjClassic `0x87B2…D3c7`, bjVegas `0x7cb6…12A5`, bjPro
+`0xb0a6…faD2`, bjUSDm `0x196A…e20D`, bjETH `0xB3A0…ef2c`, bjMEGA
+`0xf853…7F26`.

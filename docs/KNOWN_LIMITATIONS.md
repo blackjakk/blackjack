@@ -48,3 +48,9 @@
     security of MOSS are MegaETH's, not ours — acceptable here because chips
     are valueless play money. Extension wallets (EIP-6963/injected) remain
     fully supported alternatives.
+14a. **LP exit free-look — MITIGATED.** BankrollVault exits are a delayed
+    queue (requestRedeem escrows shares; claim() strikes the price >= 1 h
+    later, beyond the randomness timeout), so foreknowledge of a pending
+    beacon cannot be monetized by exiting. Residual: claims can be
+    temporarily blocked while liabilities are reserved; retry after
+    settlement.

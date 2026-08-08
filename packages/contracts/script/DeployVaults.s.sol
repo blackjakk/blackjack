@@ -59,6 +59,7 @@ contract DeployVaults is Script {
 
             BankrollVault vault = new BankrollVault(
                 t,
+                1 hours,
                 string.concat("Blackjack ", CHIP_NAMES[i], " LP"),
                 string.concat("bj", CHIP_NAMES[i])
             );
@@ -82,8 +83,9 @@ contract DeployVaults is Script {
     {
         TableFactory f = new TableFactory(IERC20(token), IRandomnessProvider(PROVIDER));
         BlackjackTableV2 t = BlackjackTableV2(f.createTable(_classicRules(), min, max, 5, msg.sender));
-        BankrollVault vault =
-            new BankrollVault(t, string.concat("Blackjack ", sym, " LP"), string.concat("bj", sym));
+        BankrollVault vault = new BankrollVault(
+            t, 1 hours, string.concat("Blackjack ", sym, " LP"), string.concat("bj", sym)
+        );
         if (seed > 0 && token == WETH) {
             IWETH(WETH).deposit{value: seed}();
             IWETH(WETH).approve(address(vault), seed);

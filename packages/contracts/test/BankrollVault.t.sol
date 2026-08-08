@@ -45,7 +45,7 @@ contract BankrollVaultTest is SeedSearch {
                 admin
             )
         );
-        vault = new BankrollVault(tbl, "Blackjack Classic LP", "bjCHIP");
+        vault = new BankrollVault(tbl, 1 hours, "Blackjack Classic LP", "bjCHIP");
 
         // The vault becomes the table's ONLY treasury.
         vm.startPrank(admin);
@@ -128,30 +128,88 @@ contract BankrollVaultTest is SeedSearch {
         assertLt(out, SEED_LIQ);
     }
 
-    function test_withdrawPullsFromTable() public {
-        seedVault();
+    function test_exitQueueHappyPath() public {
+        uint256 shares = seedVault();
         uint256 balBefore = chip.balanceOf(lp1);
         vm.prank(lp1);
-        vault.withdraw(40_000e18, lp1, lp1);
-        assertEq(chip.balanceOf(lp1), balBefore + 40_000e18);
-        assertEq(tbl.houseFunds(), SEED_LIQ - 40_000e18);
+        vault.requestRedeem(shares / 5);
+        // Shares are escrowed immediately.
+        assertEq(vault.balanceOf(lp1), shares - shares / 5);
+        assertEq(vault.balanceOf(address(vault)), shares / 5);
+        // Too early: claim reverts.
+        vm.prank(lp1);
+        vm.expectRevert();
+        vault.claim(lp1);
+        vm.warp(block.timestamp + 1 hours + 1);
+        vm.prank(lp1);
+        uint256 assets = vault.claim(lp1);
+        assertApproxEqAbs(assets, SEED_LIQ / 5, 10);
+        assertEq(chip.balanceOf(lp1), balBefore + assets);
+        assertEq(vault.balanceOf(address(vault)), 0);
     }
 
-    function test_reservedLiabilityCapsExit() public {
-        seedVault();
-        // Player opens a max-wager game: 2x reserved.
+    function test_freeLookIsDead() public {
+        // LP requests an exit while a hand it "knows" the house will lose is
+        // pending; the price is struck at CLAIM time, after the loss landed.
+        uint256 shares = seedVault();
+        vm.prank(lp1);
+        vault.requestRedeem(shares);
+        playerWinsHand(1_000e18); // the foreseen house loss settles
+        vm.warp(block.timestamp + 1 hours + 1);
+        vm.prank(lp1);
+        uint256 assets = vault.claim(lp1);
+        // The claimant EATS the loss — exactly what kills the free look.
+        assertApproxEqAbs(assets, SEED_LIQ - 1_000e18, 10);
+    }
+
+    function test_instantExitsDisabled() public {
+        uint256 shares = seedVault();
+        assertEq(vault.maxWithdraw(lp1), 0);
+        assertEq(vault.maxRedeem(lp1), 0);
+        vm.prank(lp1);
+        vm.expectRevert();
+        vault.withdraw(1e18, lp1, lp1);
+        vm.prank(lp1);
+        vm.expectRevert();
+        vault.redeem(shares, lp1, lp1);
+    }
+
+    function test_topUpRestartsClock() public {
+        uint256 shares = seedVault();
+        vm.prank(lp1);
+        vault.requestRedeem(shares / 2);
+        vm.warp(block.timestamp + 50 minutes);
+        vm.prank(lp1);
+        vault.requestRedeem(shares / 2); // top-up restarts the delay
+        vm.warp(block.timestamp + 30 minutes); // 80min total, 30 since top-up
+        vm.prank(lp1);
+        vm.expectRevert();
+        vault.claim(lp1);
+        vm.warp(block.timestamp + 31 minutes);
+        vm.prank(lp1);
+        vault.claim(lp1);
+    }
+
+    function test_reservedLiabilityBlocksClaim() public {
+        uint256 shares = seedVault();
+        vm.prank(lp1);
+        vault.requestRedeem(shares); // full exit requested
+        vm.warp(block.timestamp + 1 hours + 1);
+        // A max-wager game opens before the claim: 2x reserved cannot be pulled.
         vm.prank(player);
         tbl.placeBet(1_000e18);
-        uint256 liquid = vault.maxWithdraw(lp1);
-        // Escrowed wager sits in the table but is NOT vault assets; reserved 2x is.
-        assertEq(liquid, SEED_LIQ - 2_000e18);
         vm.prank(lp1);
-        vm.expectRevert(); // ERC4626ExceededMaxWithdraw
-        vault.withdraw(liquid + 1, lp1, lp1);
-        // Exiting exactly the liquid amount works even mid-game.
+        vm.expectRevert(); // WithdrawExceedsAvailable inside the table
+        vault.claim(lp1);
+        // Once the hand settles, the claim goes through.
+        uint256 gameId = tbl.activeGamesOf(player)[0];
+        fulfill(gameId, findInitialSeed(TEN, 8, TEN, gameId));
+        vm.prank(player);
+        tbl.stand(gameId);
+        fulfill(gameId, findDealerSeedRule(TEN, 20, false, gameId));
         vm.prank(lp1);
-        vault.withdraw(liquid, lp1, lp1);
-        assertEq(tbl.availableLiquidity(), 0);
+        uint256 assets = vault.claim(lp1);
+        assertApproxEqAbs(assets, SEED_LIQ + 1_000e18, 10); // house won that hand
     }
 
     function test_proportionalShares() public {
@@ -197,12 +255,15 @@ contract BankrollVaultTest is SeedSearch {
         tbl.withdrawHouseFunds(admin, 1e18);
     }
 
-    function test_fuzz_depositWithdrawRoundTrip(uint256 amount) public {
+    function test_fuzz_depositExitRoundTrip(uint256 amount) public {
         amount = bound(amount, 1e18, 500_000e18);
         vm.prank(lp1);
         uint256 shares = vault.deposit(amount, lp1);
         vm.prank(lp1);
-        uint256 out = vault.redeem(shares, lp1, lp1);
+        vault.requestRedeem(shares);
+        vm.warp(block.timestamp + 1 hours + 1);
+        vm.prank(lp1);
+        uint256 out = vault.claim(lp1);
         // No games played: round trip returns the deposit (±rounding dust).
         assertApproxEqAbs(out, amount, 10);
     }

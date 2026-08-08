@@ -55,21 +55,21 @@ export const DEPLOYMENTS: Partial<Record<number, BlackjackDeployment>> = {
             {name: "Vegas (H17, 6:5, surrender)", address: "0xe4eDc43D1cD0cC5370fAB275EcB1c50C1CC0b6Ee"},
             {name: "Pro (S17, 3:2, D9-11, surrender)", address: "0xb414D2B3AAe5Da85813Ea3680895a457e0a08577"},
         ],
-        // LP rollout (2026-08-08): vault = each table's sole treasury.
+        // LP rollout (2026-08-08): delayed-exit vaults (1h queue) = sole treasuries.
         vaults: [
-            {table: "0x457e5eb30973af0654aE3f6b5E1ba62d5c97C1cF", vault: "0xF4f1726687BcE9C5285Bc9Ab6bacb0Dca9F2E65F"},
-            {table: "0xe4eDc43D1cD0cC5370fAB275EcB1c50C1CC0b6Ee", vault: "0xC1D56cD890a84B2Bd433421C177b7C1f524A5de4"},
-            {table: "0xb414D2B3AAe5Da85813Ea3680895a457e0a08577", vault: "0xa8332EdB9999A300Acb1e35E8F4A313375aB97a8"},
-            {table: "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003", vault: "0xee8f3d40060290e959f285a8BA866c4FAF28eA67"},
-            {table: "0x756595C7d4e3d2668700d0f3d72CDC377b66d116", vault: "0x7686DEf9ac25dfE608e27A13c1678Cf9df19E21a"},
-            {table: "0x480F77B89B498DD995B72FE9672053836983D272", vault: "0xb0FC29344A1AdeE8FbcE46a0B913F3CEa3698C29"},
+            {table: "0x457e5eb30973af0654aE3f6b5E1ba62d5c97C1cF", vault: "0x87B20cb956d9fD3fEec2281163FFB80B7D43D3c7"},
+            {table: "0xe4eDc43D1cD0cC5370fAB275EcB1c50C1CC0b6Ee", vault: "0x7cb6F0e70745507DdBa4b31Fe9CB8698473512A5"},
+            {table: "0xb414D2B3AAe5Da85813Ea3680895a457e0a08577", vault: "0xb0a6AC3013e804031984f01c61313EfbcEa6faD2"},
+            {table: "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003", vault: "0x196A8Fd97409c1e1e194F05BB5e0d6D00232e20D"},
+            {table: "0x756595C7d4e3d2668700d0f3d72CDC377b66d116", vault: "0xB3A0E5faec83091252da443E65E28C855440ef2c"},
+            {table: "0x480F77B89B498DD995B72FE9672053836983D272", vault: "0xf853bEda69B48Dd6Cb5A84Fa64f00e503bcE7F26"},
         ],
         // Real testnet assets (verified onchain + docs 2026-08-08). No faucets for
         // USDm/MEGA — those tables start empty and wait for their first LPs.
         assetTables: [
-            {symbol: "USDm", token: "0x15e9f2B0A747aC05c7446559306687085D161e5C", factory: "0x028bb44f8a1DB4987F71E232C2F57e37B7dcA914", table: "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003", vault: "0xee8f3d40060290e959f285a8BA866c4FAF28eA67"},
-            {symbol: "ETH", token: "0x4200000000000000000000000000000000000006", factory: "0x8aCf4D5A48a7ef95e3e0ae03c2385A49B1D6c4a5", table: "0x756595C7d4e3d2668700d0f3d72CDC377b66d116", vault: "0x7686DEf9ac25dfE608e27A13c1678Cf9df19E21a"},
-            {symbol: "MEGA", token: "0xc903c68C1d389CEd76fEe0349067a4295828e6c2", factory: "0xf865FA56a56C56F9BD9601a4B812bE0F4A5634a3", table: "0x480F77B89B498DD995B72FE9672053836983D272", vault: "0xb0FC29344A1AdeE8FbcE46a0B913F3CEa3698C29"},
+            {symbol: "USDm", token: "0x15e9f2B0A747aC05c7446559306687085D161e5C", factory: "0x028bb44f8a1DB4987F71E232C2F57e37B7dcA914", table: "0x700762a0DB39AA3Dc8a84260FCd0e7A52cbc4003", vault: "0x196A8Fd97409c1e1e194F05BB5e0d6D00232e20D"},
+            {symbol: "ETH", token: "0x4200000000000000000000000000000000000006", factory: "0x8aCf4D5A48a7ef95e3e0ae03c2385A49B1D6c4a5", table: "0x756595C7d4e3d2668700d0f3d72CDC377b66d116", vault: "0xB3A0E5faec83091252da443E65E28C855440ef2c"},
+            {symbol: "MEGA", token: "0xc903c68C1d389CEd76fEe0349067a4295828e6c2", factory: "0xf865FA56a56C56F9BD9601a4B812bE0F4A5634a3", table: "0x480F77B89B498DD995B72FE9672053836983D272", vault: "0xf853bEda69B48Dd6Cb5A84Fa64f00e503bcE7F26"},
         ],
     },
 };
