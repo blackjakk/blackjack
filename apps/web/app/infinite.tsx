@@ -8,8 +8,11 @@ import {parseEther} from "viem";
 import {
     infiniteBlackjackAbi,
     testChipAbi,
+    tableChatAbi,
     drandRandomnessProviderAbi,
     drandPublishTime,
+    DEPLOYMENTS,
+    megaethTestnet,
 } from "@blackjack/config";
 import {unpackCards, handValue, OutcomeNames, fetchBeaconSignature} from "@blackjack/sdk";
 import {PROVIDER_ADDRESS, txUrl} from "../lib/config.ts";
@@ -18,6 +21,7 @@ import {CardView, TotalBadge, fmt} from "./ui.tsx";
 
 const POLL = {refetchInterval: 1500} as const;
 const ZERO = "0x0000000000000000000000000000000000000000" as const;
+const CHAT_ADDRESS = (DEPLOYMENTS[megaethTestnet.id]?.chat ?? "") as Address;
 
 type Call = {
     address: Address;
@@ -143,6 +147,23 @@ export function InfiniteTable({
         query: {...POLL, enabled: isConnected},
     });
 
+    const {data: nickData} = useReadContracts({
+        contracts: players.map(
+            (p) =>
+                ({
+                    address: CHAT_ADDRESS,
+                    abi: tableChatAbi,
+                    functionName: "nicknameOf",
+                    args: [p],
+                }) as const,
+        ),
+        query: {refetchInterval: 30_000, enabled: players.length > 0 && CHAT_ADDRESS.length === 42},
+    });
+    const seatName = (p: Address, i: number) => {
+        const nick = nickData?.[i]?.result as string | undefined;
+        return nick && nick.length > 0 ? nick : `${p.slice(0, 6)}…${p.slice(-4)}`;
+    };
+
     const myBet = useMemo(() => {
         if (!address) return undefined;
         const i = players.findIndex((p) => p.toLowerCase() === address.toLowerCase());
@@ -212,6 +233,24 @@ export function InfiniteTable({
     );
 
     const [wagerInput, setWagerInput] = useState("10");
+    const [copied, setCopied] = useState(false);
+    const onInvite = async () => {
+        const url = new URL(window.location.href);
+        url.searchParams.set("table", table);
+        try {
+            await navigator.clipboard.writeText(url.toString());
+        } catch {
+            /* clipboard unavailable — the URL bar already carries the link */
+        }
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+    };
+    /** Auto-rebet: rejoin the next round with the same wager (session-only,
+     *  off by default; disables itself on any bet error). With 1-click play
+     *  this makes group sessions flow hand after hand. */
+    const [autoRebet, setAutoRebet] = useState(false);
+    const autoBetRound = useRef<bigint>(0n);
+
     const onBet = () =>
         run("bet", async () => {
             const wager = parseEther(wagerInput || "0");
@@ -310,6 +349,28 @@ export function InfiniteTable({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [busy, isConnected, round, roundId, now, pendingRequestId, drandRounds, iAmIn]);
 
+    // Auto-rebet: as soon as a fresh round is joinable (or the old one ended),
+    // place the same wager once per round id.
+    useEffect(() => {
+        if (!autoRebet || !isConnected || busy) return;
+        if (error) {
+            setAutoRebet(false); // never loop on a failing bet
+            return;
+        }
+        const joinableNow =
+            round !== undefined
+            && round.state === RS.BETTING
+            && now < Number(round.betDeadline) - 2
+            && !iAmIn;
+        const roundOverNow =
+            round === undefined || round.state === RS.DONE || round.state === RS.CANCELLED;
+        if ((joinableNow || roundOverNow) && autoBetRound.current !== roundId + (roundOverNow ? 1n : 0n)) {
+            autoBetRound.current = roundId + (roundOverNow ? 1n : 0n);
+            void onBet();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [autoRebet, isConnected, busy, error, round, roundId, now, iAmIn]);
+
     // ------------------------------------------------------------ derived view
 
     const r = rules as Rules | undefined;
@@ -382,6 +443,9 @@ export function InfiniteTable({
             <div className="panel">
                 <div className="row">
                     <div className="hand-title">♾️ {name}</div>
+                    <button className="secondary" onClick={onInvite}>
+                        {copied ? "✓ link copied" : "🔗 invite a friend"}
+                    </button>
                     <span className="status">
                         bankroll {fmt((liquidity as readonly [bigint, bigint, bigint] | undefined)?.[0])}{" "}
                         {symbol} · bets {fmt(minWager as bigint | undefined)}–
@@ -494,7 +558,7 @@ export function InfiniteTable({
                             return (
                                 <div className="row" key={p} style={{marginTop: 4}}>
                                     <span className="status">
-                                        {me ? "⭐ you" : `${p.slice(0, 6)}…${p.slice(-4)}`} ·{" "}
+                                        {me ? "⭐ you" : seatName(p, i)} ·{" "}
                                         {fmt(b?.wager)} {symbol}
                                         {b && b.action === ACT.DOUBLE ? " (doubled)" : ""}
                                         {state === RS.ACTING
@@ -560,6 +624,17 @@ export function InfiniteTable({
                         🎟️ You&apos;re in with {fmt(myBet!.wager)} {symbol} — waiting for the
                         window to close.
                     </div>
+                )}
+                {isConnected && (
+                    <label className="status row" style={{marginTop: 8, gap: 6, cursor: "pointer"}}>
+                        <input
+                            type="checkbox"
+                            checked={autoRebet}
+                            onChange={(e) => setAutoRebet(e.target.checked)}
+                        />
+                        🔁 auto-rebet {wagerInput || "…"} {symbol} each round (keeps your seat at
+                        the table; turns itself off if a bet fails)
+                    </label>
                 )}
 
                 {pendingRequestId !== 0n

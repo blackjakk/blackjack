@@ -800,3 +800,28 @@ button.active-mode {
     border-color: color-mix(in srgb, var(--red) 40%, transparent);
     background: color-mix(in srgb, var(--red) 8%, var(--panel2));
 }
+
+/* ---- site-wide "round filling now" banner + lobby live badges */
+.live-banner {
+    display: block;
+    width: 100%;
+    text-align: center;
+    background: color-mix(in srgb, var(--red) 14%, var(--panel));
+    border: 1px solid color-mix(in srgb, var(--red) 50%, transparent);
+    border-radius: 10px;
+    color: var(--text);
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    animation: livepulse 1.6s ease-in-out infinite;
+}
+@keyframes livepulse {
+    50% {
+        border-color: var(--red);
+    }
+}
+.live-open {
+    color: var(--red);
+    font-weight: 600;
+}

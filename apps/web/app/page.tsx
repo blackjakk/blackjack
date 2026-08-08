@@ -33,6 +33,7 @@ import {drandPublishTime} from "@blackjack/config";
 import {Chat} from "./chat.tsx";
 import {CardView, TotalBadge, fmt} from "./ui.tsx";
 import {Lobby, type TableChoice} from "./lobby.tsx";
+import {useLiveRounds, joinableRound} from "./live.tsx";
 import {V2Table} from "./v2table.tsx";
 import {InfiniteTable} from "./infinite.tsx";
 import {StatsPanel} from "./stats.tsx";
@@ -412,6 +413,23 @@ export default function Page() {
     const [tableChoice, setTableChoice] = useState<TableChoice>(
         hasV2 && V2_TABLES.length > 0 ? V2_TABLES[0]!.address : "v1",
     );
+
+    // Invite deep-links: ?table=<address|v1> lands a friend directly at a table,
+    // and picking a table keeps the URL shareable.
+    useEffect(() => {
+        const t = new URLSearchParams(window.location.search).get("table");
+        if (!t) return;
+        if (t === "v1") setTableChoice("v1");
+        else if (/^0x[0-9a-fA-F]{40}$/.test(t)) setTableChoice(t as TableChoice);
+    }, []);
+    useEffect(() => {
+        const url = new URL(window.location.href);
+        if (tableChoice === "v1") url.searchParams.set("table", "v1");
+        else url.searchParams.set("table", tableChoice as string);
+        window.history.replaceState(null, "", url);
+    }, [tableChoice]);
+
+    const liveRounds = useLiveRounds();
 
     const [wagerInput, setWagerInput] = useState("10");
     const [lastGameId, setLastGameId] = useState<bigint | null>(null);
@@ -922,7 +940,20 @@ export default function Page() {
                 </div>
             )}
 
-            <Lobby selected={tableChoice} onSelect={setTableChoice} />
+            {(() => {
+                const jr = joinableRound(liveRounds, now);
+                if (!jr || (tableChoice as string).toLowerCase() === jr.table.toLowerCase()) {
+                    return null;
+                }
+                return (
+                    <button className="live-banner" onClick={() => setTableChoice(jr.table)}>
+                        🔴 LIVE — a round is filling at ♾️ {jr.symbol} Infinite · {jr.playerCount}{" "}
+                        player{jr.playerCount === 1 ? "" : "s"} in · {Math.max(0, jr.betDeadline - now)}s
+                        left to join →
+                    </button>
+                );
+            })()}
+            <Lobby selected={tableChoice} onSelect={setTableChoice} live={liveRounds} />
 
             {tableChoice === "v1" && (
             <div className="panel stats">
