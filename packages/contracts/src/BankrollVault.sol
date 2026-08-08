@@ -52,7 +52,9 @@ contract BankrollVault is ERC4626 {
     uint64 internal constant MAX_DELAY = 7 days;
 
     event ExitRequested(address indexed owner, uint256 shares, uint64 claimableAt);
-    event ExitClaimed(address indexed owner, address indexed receiver, uint256 shares, uint256 assets);
+    event ExitClaimed(
+        address indexed owner, address indexed receiver, uint256 shares, uint256 assets
+    );
 
     error AssetMismatch();
     error InvalidDelay();

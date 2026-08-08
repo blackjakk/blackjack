@@ -21,6 +21,8 @@ export interface BlackjackDeployment {
     /** Phase A (v2): permissionless TableFactory and its launch tables. */
     factory?: Address;
     v2Tables?: {name: string; address: Address}[];
+    /** Split-capable V3 tables (extended ABI: split/outcome2/hand2). */
+    v3Tables?: {name: string; address: Address}[];
     /** LP vaults (ERC-4626) per table, plus real-asset tables (own factories). */
     vaults?: {table: Address; vault: Address}[];
     assetTables?: {
@@ -55,8 +57,13 @@ export const DEPLOYMENTS: Partial<Record<number, BlackjackDeployment>> = {
             {name: "Vegas (H17, 6:5, surrender)", address: "0xe4eDc43D1cD0cC5370fAB275EcB1c50C1CC0b6Ee"},
             {name: "Pro (S17, 3:2, D9-11, surrender)", address: "0xb414D2B3AAe5Da85813Ea3680895a457e0a08577"},
         ],
+        // Split rollout (2026-08-08): V3 engine (split pairs), factory 0xEF80…1a72.
+        v3Tables: [
+            {name: "Split (S17, 3:2, split, surrender)", address: "0x1d8DD0B8D825c939024582f31Dc512955187Dc2E"},
+        ],
         // LP rollout (2026-08-08): delayed-exit vaults (1h queue) = sole treasuries.
         vaults: [
+            {table: "0x1d8DD0B8D825c939024582f31Dc512955187Dc2E", vault: "0xa103a0B75b591d77f32b479bdaD2869dc7F222B2"},
             {table: "0x457e5eb30973af0654aE3f6b5E1ba62d5c97C1cF", vault: "0x87B20cb956d9fD3fEec2281163FFB80B7D43D3c7"},
             {table: "0xe4eDc43D1cD0cC5370fAB275EcB1c50C1CC0b6Ee", vault: "0x7cb6F0e70745507DdBa4b31Fe9CB8698473512A5"},
             {table: "0xb414D2B3AAe5Da85813Ea3680895a457e0a08577", vault: "0xb0a6AC3013e804031984f01c61313EfbcEa6faD2"},

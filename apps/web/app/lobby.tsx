@@ -4,7 +4,7 @@ import {useMemo} from "react";
 import {useReadContract, useReadContracts} from "wagmi";
 import type {Address} from "viem";
 import {tableFactoryAbi, blackjackTableV2Abi} from "@blackjack/config";
-import {FACTORY_ADDRESS, V2_TABLES, ASSET_TABLES, hasV2} from "../lib/config.ts";
+import {FACTORY_ADDRESS, V2_TABLES, V3_TABLES, ASSET_TABLES, hasV2} from "../lib/config.ts";
 import {fmt} from "./ui.tsx";
 
 const POLL = {refetchInterval: 5000} as const;
@@ -50,6 +50,7 @@ export function Lobby({
     const tables = useMemo(() => {
         const curated = [
             ...V2_TABLES.map((t) => ({...t, symbol: "CHIP", community: false})),
+            ...V3_TABLES.map((t) => ({...t, symbol: "CHIP", community: false})),
             ...ASSET_TABLES.map((t) => ({
                 name: `${t.symbol} Classic (S17, 3:2, surrender)`,
                 address: t.table,

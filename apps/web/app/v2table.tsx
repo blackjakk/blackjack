@@ -4,11 +4,12 @@ import {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {usePublicClient, useReadContract, useReadContracts} from "wagmi";
 import type {Address} from "viem";
 import {parseEther} from "viem";
-import {blackjackTableV2Abi, testChipAbi, drandRandomnessProviderAbi} from "@blackjack/config";
+import {blackjackTableV2Abi, blackjackTableV3Abi, testChipAbi, drandRandomnessProviderAbi} from "@blackjack/config";
 import {drandPublishTime} from "@blackjack/config";
 import {
     unpackCards,
     handValue,
+    cardValue,
     GameState,
     Outcome,
     OutcomeNames,
@@ -45,6 +46,13 @@ type V2Game = {
     dealerCards: bigint;
     pendingRequestId: bigint;
     pendingProvider: Address;
+    // V3 (split) extras — undefined on V2 tables.
+    split?: boolean;
+    splitAces?: boolean;
+    activeHand?: number;
+    hand2Count?: number;
+    hand2Cards?: bigint;
+    outcome2?: number;
 };
 
 type Rules = {
@@ -63,6 +71,7 @@ export function V2Table({
     isConnected,
     oneClickActive,
     isMoss,
+    isV3,
     token,
     symbol,
     vault,
@@ -75,6 +84,7 @@ export function V2Table({
     isConnected: boolean;
     oneClickActive: boolean;
     isMoss: boolean;
+    isV3: boolean;
     token: Address;
     symbol: string;
     vault: Address | undefined;
@@ -82,7 +92,7 @@ export function V2Table({
     writeBatch: WriteBatch;
 }) {
     const publicClient = usePublicClient();
-    const tbl = {address: table, abi: blackjackTableV2Abi} as const;
+    const tbl = {address: table, abi: isV3 ? blackjackTableV3Abi : blackjackTableV2Abi} as const;
     const chip = {address: token, abi: testChipAbi} as const;
     const zero = "0x0000000000000000000000000000000000000000" as const;
 
@@ -230,6 +240,19 @@ export function V2Table({
     const onAct = (fn: "hit" | "stand" | "surrender", id: bigint) =>
         run(`${fn}:${id}`, () => writeTx({...tbl, functionName: fn, args: [id]}));
 
+    const onSplit = (id: bigint, wager: bigint) =>
+        run(`split:${id}`, async () =>
+            writeBatch(
+                await callsWithAllowance(wager, {...tbl, functionName: "split", args: [id]}),
+            ),
+        );
+
+    const splitAllowedFor = (g: V2Game): boolean => {
+        if (!isV3 || g.playerCount !== 2 || g.doubled || g.split) return false;
+        const cards = unpackCards(g.playerCards, g.playerCount);
+        return cardValue(cards[0]!) === cardValue(cards[1]!);
+    };
+
     const onDouble = (id: bigint, wager: bigint) =>
         run(`double:${id}`, async () =>
             writeBatch(
@@ -326,7 +349,12 @@ export function V2Table({
                 if (!g) return null;
                 const playerCards = unpackCards(g.playerCards, g.playerCount);
                 const dealerCards = unpackCards(g.dealerCards, g.dealerCount);
+                const hand2Cards =
+                    g.split && g.hand2Cards !== undefined
+                        ? unpackCards(g.hand2Cards, g.hand2Count ?? 0)
+                        : [];
                 const pv = handValue(playerCards);
+                const h2v = handValue(hand2Cards);
                 const dv = handValue(dealerCards);
                 const isOver = g.state === GameState.SETTLED || g.state === GameState.CANCELLED;
                 const isTurn = g.state === GameState.PLAYER_TURN;
@@ -363,9 +391,16 @@ export function V2Table({
                             {dealerCards.length === 0 && <span className="status">no cards yet</span>}
                         </div>
                         <div className="hand-title" style={{marginTop: 8}}>
-                            You
+                            {g.split ? "You — hand 1" : "You"}
                             {playerCards.length > 0 && (
                                 <TotalBadge total={pv.total} soft={pv.soft} bust={pv.total > 21} />
+                            )}
+                            {g.split && !isOver && g.activeHand === 0 && " ◀"}
+                            {g.split && isOver && (
+                                <span className="status">
+                                    {" "}
+                                    {(OutcomeNames[g.outcome] ?? "?").replaceAll("_", " ")}
+                                </span>
                             )}
                         </div>
                         <div className="cards">
@@ -374,6 +409,38 @@ export function V2Table({
                             ))}
                             {playerCards.length === 0 && <span className="status">dealing…</span>}
                         </div>
+                        {g.split && (
+                            <>
+                                <div className="hand-title" style={{marginTop: 8}}>
+                                    You — hand 2
+                                    {hand2Cards.length > 0 && (
+                                        <TotalBadge
+                                            total={h2v.total}
+                                            soft={h2v.soft}
+                                            bust={h2v.total > 21}
+                                        />
+                                    )}
+                                    {!isOver && g.activeHand === 1 && " ◀"}
+                                    {isOver && (
+                                        <span className="status">
+                                            {" "}
+                                            {(OutcomeNames[g.outcome2 ?? 0] ?? "?").replaceAll(
+                                                "_",
+                                                " ",
+                                            )}
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="cards">
+                                    {hand2Cards.map((c, j) => (
+                                        <CardView key={j} card={c} />
+                                    ))}
+                                    {hand2Cards.length === 0 && (
+                                        <span className="status">waiting for hand 1…</span>
+                                    )}
+                                </div>
+                            </>
+                        )}
 
                         <div className="row" style={{marginTop: 10}}>
                             {isTurn && (
@@ -392,7 +459,15 @@ export function V2Table({
                                             {busy === `double:${id}` ? "…" : "Double"}
                                         </button>
                                     )}
-                                    {r?.lateSurrender && g.playerCount === 2 && !g.doubled && (
+                                    {splitAllowedFor(g) && (
+                                        <button
+                                            disabled={!!busy || paused === true}
+                                            onClick={() => onSplit(id, g.wager)}
+                                        >
+                                            {busy === `split:${id}` ? "…" : "Split"}
+                                        </button>
+                                    )}
+                                    {r?.lateSurrender && g.playerCount === 2 && !g.doubled && !g.split && (
                                         <button
                                             className="secondary"
                                             disabled={!!busy}

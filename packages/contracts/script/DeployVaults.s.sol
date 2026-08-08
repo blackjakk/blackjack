@@ -82,7 +82,8 @@ contract DeployVaults is Script {
         internal
     {
         TableFactory f = new TableFactory(IERC20(token), IRandomnessProvider(PROVIDER));
-        BlackjackTableV2 t = BlackjackTableV2(f.createTable(_classicRules(), min, max, 5, msg.sender));
+        BlackjackTableV2 t =
+            BlackjackTableV2(f.createTable(_classicRules(), min, max, 5, msg.sender));
         BankrollVault vault = new BankrollVault(
             t, 1 hours, string.concat("Blackjack ", sym, " LP"), string.concat("bj", sym)
         );

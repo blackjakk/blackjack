@@ -45,9 +45,11 @@ import {
     txUrl,
     BUILD_ID,
     V2_TABLES,
+    V3_TABLES,
     ASSET_TABLES,
     VAULTS,
     tableToken,
+    isV3Table,
     hasV2,
 } from "../lib/config.ts";
 
@@ -558,6 +560,9 @@ export default function Page() {
                       {to: target, signature: "surrender(uint256)"},
                       {to: target, signature: "cancelTimedOutGame(uint256)"},
                       {to: target, signature: "fundHouse(uint256)"},
+                      ...(isV3Table(target)
+                          ? [{to: target, signature: "split(uint256)"}]
+                          : []),
                   ];
             const request = provider.request({
                 method: "wallet_grantPermissions",
@@ -957,6 +962,7 @@ export default function Page() {
                     table={tableChoice as `0x${string}`}
                     name={
                         V2_TABLES.find((t) => t.address === tableChoice)?.name ??
+                        V3_TABLES.find((t) => t.address === tableChoice)?.name ??
                         ASSET_TABLES.find((t) => t.table === tableChoice)?.symbol.concat(
                             " Classic",
                         ) ??
@@ -966,6 +972,7 @@ export default function Page() {
                     isConnected={isConnected && !wrongNetwork}
                     oneClickActive={grantCovers(tableChoice as string)}
                     isMoss={isMoss}
+                    isV3={isV3Table(tableChoice as string)}
                     token={tableToken(tableChoice as string).token}
                     symbol={tableToken(tableChoice as string).symbol}
                     vault={VAULTS[(tableChoice as string).toLowerCase()]}

@@ -156,3 +156,10 @@ delayed vaults (1 h exit queue, price struck at claim). All Sourcify
 exact_match: bjClassic `0x87B2…D3c7`, bjVegas `0x7cb6…12A5`, bjPro
 `0xb0a6…faD2`, bjUSDm `0x196A…e20D`, bjETH `0xB3A0…ef2c`, bjMEGA
 `0xf853…7F26`.
+
+### Split rollout — 2026-08-08 (chain 6343)
+
+V3 engine (split pairs): TableFactoryV3 `0xEF80C2BDAF12059c0e750C6F19E88ed76c951a72`,
+"Split" CHIP table `0x1d8DD0B8D825c939024582f31Dc512955187Dc2E` (S17, 3:2, split,
+surrender; 200k CHIP via delayed vault `0xa103a0B75b591d77f32b479bdaD2869dc7F222B2`).
+All Sourcify exact_match. 174 tests incl. 11 split scenarios + V3 invariants.

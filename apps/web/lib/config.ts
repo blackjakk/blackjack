@@ -68,6 +68,13 @@ export const VAULTS: Record<string, Address> = Object.fromEntries(
 /** Real-asset tables (USDm / ETH-as-WETH / MEGA), each with its own vault. */
 export const ASSET_TABLES = live?.assetTables ?? [];
 
+/** Split-capable V3 tables (extended ABI). */
+export const V3_TABLES: {name: string; address: Address}[] = live?.v3Tables ?? [];
+
+export function isV3Table(table: string): boolean {
+    return V3_TABLES.some((t) => t.address.toLowerCase() === table.toLowerCase());
+}
+
 /** Wager token + display symbol for any known table. */
 export function tableToken(table: string): {token: Address; symbol: string} {
     const at = ASSET_TABLES.find((t) => t.table.toLowerCase() === table.toLowerCase());

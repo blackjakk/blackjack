@@ -59,3 +59,17 @@ strategy EV differs slightly from a real 6-deck shoe and card counting is
 meaningless. This is a documented, deliberate MVP simplification; the
 drawing code is isolated so a persistent finite shoe can be added later
 without changing the state machine.
+
+## Split (V3 tables only)
+
+* Any equal-VALUE first two cards may be split (K+10 qualifies) for a second
+  wager equal to the first.
+* Hands play sequentially — hand 1 to completion, then hand 2 — each card from
+  its own committed drand seed.
+* Split aces receive exactly ONE card each and auto-stand; a post-split 21 is
+  NOT a natural (pays 1:1, loses to a dealer natural).
+* No re-splits, no double-after-split, no surrender-after-split. These keep the
+  2x-wager liability reservation exact: the worst case (both hands win 1:1)
+  equals the doubled-win ceiling.
+* ENHC: a dealer natural takes both stakes; if both hands bust, the dealer
+  never draws.
