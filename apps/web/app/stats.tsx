@@ -3,22 +3,53 @@
 import {useCallback, useEffect, useRef, useState} from "react";
 import {usePublicClient, useReadContracts} from "wagmi";
 import type {Address} from "viem";
-import {blackjackTableV2Abi, tableChatAbi, DEPLOYMENTS, megaethTestnet} from "@blackjack/config";
+import {
+    blackjackTableV2Abi,
+    blackjackTableV3Abi,
+    infiniteBlackjackAbi,
+    tableChatAbi,
+    DEPLOYMENTS,
+    megaethTestnet,
+} from "@blackjack/config";
 import {OutcomeNames} from "@blackjack/sdk";
-import {TABLE_ADDRESS, V2_TABLES} from "../lib/config.ts";
+import {
+    TABLE_ADDRESS,
+    V2_TABLES,
+    V3_TABLES,
+    ASSET_TABLES,
+    INFINITE_TABLES,
+    tableToken,
+} from "../lib/config.ts";
 import {fmt} from "./ui.tsx";
 
 const live = DEPLOYMENTS[megaethTestnet.id];
 const CHAT_ADDRESS = (live?.chat ?? "") as Address;
 const SCAN_FROM = live?.deployBlock ?? 0n;
 const CHUNK = 100_000n;
-const CACHE_KEY = "bj-stats-v1";
+const CACHE_KEY = "bj-stats-v2"; // v2: split/asset/infinite coverage added
 
-/** All tables the scoreboard aggregates (v1 + curated v2). */
-const TABLES: {name: string; address: Address}[] = [
-    {name: "Original", address: TABLE_ADDRESS},
-    ...V2_TABLES,
+/** Per-hand tables the scoreboard aggregates. Net is CHIP-only; asset-table
+ *  hands still count toward W/P/L and history (tagged with their symbol). */
+const TABLES: {name: string; address: Address; symbol: string; split?: boolean}[] = [
+    {name: "Original", address: TABLE_ADDRESS, symbol: "CHIP"},
+    ...V2_TABLES.map((t) => ({name: t.name.split(" (")[0]!, address: t.address, symbol: "CHIP"})),
+    ...V3_TABLES.map((t) => ({
+        name: t.name.split(" (")[0]!,
+        address: t.address,
+        symbol: "CHIP",
+        split: true,
+    })),
+    ...ASSET_TABLES.map((t) => ({
+        name: `${t.symbol} Classic`,
+        address: t.table,
+        symbol: t.symbol,
+    })),
 ];
+
+/** Shared-round tables (different events: BetPlaced/PlayerActed/PlayerSettled). */
+const INF_TABLES: {name: string; address: Address; symbol: string}[] = INFINITE_TABLES.map(
+    (t) => ({name: `${t.symbol} Infinite`, address: t.address, symbol: tableToken(t.address).symbol}),
+);
 
 type PlayerStats = {
     hands: number;
@@ -113,8 +144,8 @@ export function StatsPanel({address}: {address: Address | undefined}) {
         for (; from <= latest; from += CHUNK) {
             const to = from + CHUNK - 1n < latest ? from + CHUNK - 1n : latest;
             for (const t of TABLES) {
-                // Same event shapes on v1 and v2 — the v2 ABI decodes both.
-                const [created, doubled, settled] = await Promise.all([
+                // Same event shapes on v1/v2/v3 — the v2 ABI decodes them all.
+                const [created, doubled, splits, settled] = await Promise.all([
                     pub.getContractEvents({
                         address: t.address, abi: blackjackTableV2Abi,
                         eventName: "GameCreated", fromBlock: from, toBlock: to,
@@ -123,6 +154,12 @@ export function StatsPanel({address}: {address: Address | undefined}) {
                         address: t.address, abi: blackjackTableV2Abi,
                         eventName: "PlayerDoubled", fromBlock: from, toBlock: to,
                     }),
+                    t.split
+                        ? pub.getContractEvents({
+                              address: t.address, abi: blackjackTableV3Abi,
+                              eventName: "PlayerSplit", fromBlock: from, toBlock: to,
+                          })
+                        : Promise.resolve([]),
                     pub.getContractEvents({
                         address: t.address, abi: blackjackTableV2Abi,
                         eventName: "GameSettled", fromBlock: from, toBlock: to,
@@ -134,7 +171,8 @@ export function StatsPanel({address}: {address: Address | undefined}) {
                         wager: a.wager, doubled: false, player: a.player.toLowerCase(),
                     });
                 }
-                for (const log of doubled) {
+                // Doubling and splitting both take a second equal wager.
+                for (const log of [...doubled, ...splits] as {args: unknown}[]) {
                     const a = log.args as {gameId: bigint};
                     const w = s.wagers.get(`${t.address}:${a.gameId}`);
                     if (w) w.doubled = true;
@@ -159,12 +197,78 @@ export function StatsPanel({address}: {address: Address | undefined}) {
                     else if (outcome === 3) p.pushes++;
                     else if (LOSS.has(outcome)) p.losses++;
                     else if (outcome === 8) p.surrenders++;
-                    p.staked += stake;
-                    p.paid += a.payout;
+                    if (t.symbol === "CHIP") {
+                        // The board's net column is CHIP-denominated; other
+                        // assets count toward hands/W-P-L and history only.
+                        p.staked += stake;
+                        p.paid += a.payout;
+                    }
                     s.players.set(key, p);
                     s.hands.unshift({
                         table: t.name,
                         gameId: a.gameId.toString(),
+                        player: key,
+                        outcome,
+                        payout: a.payout,
+                        block: (log.blockNumber ?? 0n).toString(),
+                    });
+                }
+            }
+            for (const t of INF_TABLES) {
+                const [bets, acted, seatSettled] = await Promise.all([
+                    pub.getContractEvents({
+                        address: t.address, abi: infiniteBlackjackAbi,
+                        eventName: "BetPlaced", fromBlock: from, toBlock: to,
+                    }),
+                    pub.getContractEvents({
+                        address: t.address, abi: infiniteBlackjackAbi,
+                        eventName: "PlayerActed", fromBlock: from, toBlock: to,
+                    }),
+                    pub.getContractEvents({
+                        address: t.address, abi: infiniteBlackjackAbi,
+                        eventName: "PlayerSettled", fromBlock: from, toBlock: to,
+                    }),
+                ]);
+                for (const log of bets) {
+                    const a = log.args as {roundId: bigint; player: Address; wager: bigint};
+                    s.wagers.set(`${t.address}:${a.roundId}:${a.player.toLowerCase()}`, {
+                        wager: a.wager, doubled: false, player: a.player.toLowerCase(),
+                    });
+                }
+                for (const log of acted) {
+                    const a = log.args as {roundId: bigint; player: Address; action: number};
+                    if (Number(a.action) !== 3) continue; // DOUBLE
+                    const w = s.wagers.get(`${t.address}:${a.roundId}:${a.player.toLowerCase()}`);
+                    if (w) w.doubled = true;
+                }
+                for (const log of seatSettled) {
+                    const a = log.args as {
+                        roundId: bigint; player: Address; outcome: number; payout: bigint;
+                    };
+                    const key = a.player.toLowerCase();
+                    const wagerKey = `${t.address}:${a.roundId}:${key}`;
+                    const w = s.wagers.get(wagerKey);
+                    s.wagers.delete(wagerKey);
+                    const stake = w ? w.wager * (w.doubled ? 2n : 1n) : 0n;
+                    const outcome = Number(a.outcome);
+                    if (outcome === 7) continue; // cancelled refunds aren't hands
+                    const p = s.players.get(key) ?? {
+                        hands: 0, wins: 0, pushes: 0, losses: 0, surrenders: 0,
+                        staked: 0n, paid: 0n,
+                    };
+                    p.hands++;
+                    if (WIN.has(outcome)) p.wins++;
+                    else if (outcome === 3) p.pushes++;
+                    else if (LOSS.has(outcome)) p.losses++;
+                    else if (outcome === 8) p.surrenders++;
+                    if (t.symbol === "CHIP") {
+                        p.staked += stake;
+                        p.paid += a.payout;
+                    }
+                    s.players.set(key, p);
+                    s.hands.unshift({
+                        table: t.name,
+                        gameId: a.roundId.toString(),
                         player: key,
                         outcome,
                         payout: a.payout,
@@ -278,7 +382,9 @@ export function StatsPanel({address}: {address: Address | undefined}) {
                         {myHands.map((h) => (
                             <div key={`${h.table}:${h.gameId}`}>
                                 {h.table} #{h.gameId} — {outcomeLabel(h.outcome)}
-                                {h.payout > 0n ? ` (paid ${fmt(h.payout)} CHIP)` : ""}
+                                {h.payout > 0n
+                                    ? ` (paid ${fmt(h.payout)} ${h.table.split(" ")[0] === "USDm" || h.table.split(" ")[0] === "ETH" || h.table.split(" ")[0] === "MEGA" ? h.table.split(" ")[0] : "CHIP"})`
+                                    : ""}
                             </div>
                         ))}
                     </div>

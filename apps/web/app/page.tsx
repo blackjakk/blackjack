@@ -63,6 +63,13 @@ const POLL = {refetchInterval: 1500} as const;
 const ONE_CLICK_HOURS = 24;
 const ONE_CLICK_CHIP_PER_DAY = "5000";
 const ONE_CLICK_GAS_PER_DAY = "0.01";
+/** Daily silent-spend cap per wager token (18-dec units as strings). */
+const ONE_CLICK_SPEND_PER_DAY: Record<string, string> = {
+    CHIP: ONE_CLICK_CHIP_PER_DAY,
+    USDm: "200",
+    MEGA: "200",
+    ETH: "0.02",
+};
 
 type MossProvider = {
     request: (args: {method: string; params?: unknown}) => Promise<unknown>;
@@ -595,6 +602,13 @@ export default function Page() {
                             ? [{to: target, signature: "split(uint256)"}]
                             : []),
                     ];
+            // Grant the SELECTED table's wager token (CHIP tables aren't the only
+            // ones): approve + a per-day spend cap on that token, faucet only when
+            // it's the CHIP faucet token.
+            const {token: grantToken, symbol: grantSymbol} = tableToken(
+                v1 ? TABLE_ADDRESS : (tableChoice as string),
+            );
+            const spendCap = parseEther(ONE_CLICK_SPEND_PER_DAY[grantSymbol] ?? "100");
             const request = provider.request({
                 method: "wallet_grantPermissions",
                 params: [
@@ -603,17 +617,15 @@ export default function Page() {
                             expiry,
                             permissions: {
                                 calls: [
-                                    {to: CHIP_ADDRESS, signature: "faucet()"},
-                                    {to: CHIP_ADDRESS, signature: "approve(address,uint256)"},
+                                    ...(grantToken.toLowerCase() === CHIP_ADDRESS.toLowerCase()
+                                        ? [{to: CHIP_ADDRESS, signature: "faucet()"}]
+                                        : []),
+                                    {to: grantToken, signature: "approve(address,uint256)"},
                                     {to: PROVIDER_ADDRESS, signature: "fulfill(uint256,bytes)"},
                                     ...tableCalls,
                                 ],
                                 spend: [
-                                    {
-                                        limit: parseEther(ONE_CLICK_CHIP_PER_DAY),
-                                        period: "day",
-                                        token: CHIP_ADDRESS,
-                                    },
+                                    {limit: spendCap, period: "day", token: grantToken},
                                     {limit: parseEther(ONE_CLICK_GAS_PER_DAY), period: "day"},
                                 ],
                             },
@@ -639,7 +651,7 @@ export default function Page() {
             const targets = Array.from(
                 new Set([
                     ...(oneClickGrant?.targets ?? []),
-                    ...[CHIP_ADDRESS, PROVIDER_ADDRESS, target].map((a) => a.toLowerCase()),
+                    ...[grantToken, PROVIDER_ADDRESS, target].map((a) => a.toLowerCase()),
                 ]),
             );
             localStorage.setItem(oneClickKey, JSON.stringify({expiry, targets}));
