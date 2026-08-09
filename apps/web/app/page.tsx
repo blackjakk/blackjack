@@ -193,16 +193,28 @@ export default function Page() {
     // silently: scoped to this table's contracts, capped per day, 24h expiry.
     const isMoss = liveConnector?.id === "mossWallet";
     const oneClickKey = `moss-oneclick:${address ?? ""}`;
-    const [oneClickGrant, setOneClickGrant] = useState<{expiry: number; targets: string[]} | null>(
-        null,
-    );
-    const readCachedGrant = useCallback((): {expiry: number; targets: string[]} | null => {
+    const [oneClickGrant, setOneClickGrant] = useState<{
+        expiry: number;
+        targets: string[];
+        /** normalized "to:signature" pairs the wallet says are granted (may be
+         *  absent on old caches until the next wallet_getPermissions refresh) */
+        calls?: string[];
+    } | null>(null);
+    const readCachedGrant = useCallback((): {
+        expiry: number;
+        targets: string[];
+        calls?: string[];
+    } | null => {
         const raw = localStorage.getItem(oneClickKey);
         if (!raw) return null;
         try {
-            const p = JSON.parse(raw) as {expiry?: number; targets?: string[]};
+            const p = JSON.parse(raw) as {expiry?: number; targets?: string[]; calls?: string[]};
             if (p && typeof p.expiry === "number") {
-                return {expiry: p.expiry, targets: (p.targets ?? []).map((t) => t.toLowerCase())};
+                return {
+                    expiry: p.expiry,
+                    targets: (p.targets ?? []).map((t) => t.toLowerCase()),
+                    calls: p.calls,
+                };
             }
         } catch {
             /* old format: bare expiry number covering only the v1 contracts */
@@ -228,7 +240,7 @@ export default function Page() {
                 | {
                       permissions?: {
                           expiry: number;
-                          permissions: {calls: {to: string}[]};
+                          permissions: {calls: {to: string; signature: string}[]};
                       } | null;
                   }
                 | undefined;
@@ -237,7 +249,10 @@ export default function Page() {
                 const targets = Array.from(
                     new Set(p.permissions.calls.map((c) => c.to.toLowerCase())),
                 );
-                const grant = {expiry: p.expiry, targets};
+                const calls = p.permissions.calls.map(
+                    (c) => `${c.to.toLowerCase()}:${c.signature}`,
+                );
+                const grant = {expiry: p.expiry, targets, calls};
                 localStorage.setItem(oneClickKey, JSON.stringify(grant));
                 setOneClickGrant(grant);
             } else if (p === null || p === undefined) {
@@ -266,6 +281,7 @@ export default function Page() {
             oneClickActive && (oneClickGrant?.targets.includes(target.toLowerCase()) ?? false),
         [oneClickActive, oneClickGrant],
     );
+
 
     const writeTx = useCallback(
         async (args: Parameters<typeof writeContractAsync>[0]) => {
@@ -620,20 +636,19 @@ export default function Page() {
     ];
 
     /**
-     * One passkey approval; afterwards matching game calls skip the popup.
+     * The grant PLAN for a table: every {to, signature} pair this build's game
+     * flows need there. Used both to REQUEST the grant and to AUDIT an existing
+     * grant against it — so an app update that adds calls automatically flags
+     * stale approvals instead of silently downgrading to popups.
      * Scope: CHIP tables are granted individually (the all-tables list is the
-     * shape known to stall the wallet's approval sheet), but the real-asset
-     * families (USDm/ETH/MEGA) each have only TWO tables — classic + infinite —
-     * so one approval covers the whole asset and switching between its tables
-     * never downgrades to popups.
+     * shape known to stall the wallet's approval sheet); the real-asset families
+     * (USDm/ETH/MEGA) have only TWO tables each, so one approval covers both.
      */
-    const onEnableOneClick = () =>
-        run("oneclick", async () => {
-            const v1 = tableChoice === "v1";
-            const target = (v1 ? TABLE_ADDRESS : tableChoice) as `0x${string}`;
-            const provider = (await liveConnector!.getProvider()) as MossProvider;
-            const expiry = Math.floor(Date.now() / 1000) + ONE_CLICK_HOURS * 3600;
-            const {symbol: grantSym} = tableToken(target);
+    const grantPlanFor = useCallback(
+        (choice: TableChoice) => {
+            const v1 = choice === "v1";
+            const target = (v1 ? TABLE_ADDRESS : choice) as `0x${string}`;
+            const {token: grantToken, symbol: grantSym} = tableToken(target);
             const assetPair =
                 grantSym !== "CHIP"
                     ? {
@@ -646,22 +661,56 @@ export default function Page() {
                 : [target];
             const tableCalls = v1
                 ? [
-                      {to: target, signature: "placeBet(uint256)"},
-                      {to: target, signature: "hit()"},
-                      {to: target, signature: "stand()"},
-                      {to: target, signature: "double()"},
-                      {to: target, signature: "cancelTimedOutGame(uint256)"},
+                      {to: target as string, signature: "placeBet(uint256)"},
+                      {to: target as string, signature: "hit()"},
+                      {to: target as string, signature: "stand()"},
+                      {to: target as string, signature: "double()"},
+                      {to: target as string, signature: "cancelTimedOutGame(uint256)"},
                   ]
                 : grantTargets.flatMap((t) =>
                       isInfiniteTable(t) ? infiniteSigs(t) : perHandSigs(t),
                   );
-            // Grant the SELECTED table's wager token (CHIP tables aren't the only
-            // ones): approve + a per-day spend cap on that token, faucet only when
-            // it's the CHIP faucet token.
-            const {token: grantToken, symbol: grantSymbol} = tableToken(
-                v1 ? TABLE_ADDRESS : (tableChoice as string),
-            );
-            const spendCap = parseEther(ONE_CLICK_SPEND_PER_DAY[grantSymbol] ?? "100");
+            const calls = [
+                ...(grantToken.toLowerCase() === CHIP_ADDRESS.toLowerCase()
+                    ? [{to: CHIP_ADDRESS as string, signature: "faucet()"}]
+                    : []),
+                {to: grantToken as string, signature: "approve(address,uint256)"},
+                {to: PROVIDER_ADDRESS as string, signature: "fulfill(uint256,bytes)"},
+                ...tableCalls,
+            ];
+            return {target, grantToken, grantSym, grantTargets, calls};
+        },
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [],
+    );
+
+/** Why the active grant is insufficient at the current table, if it is:
+     *  "table" — approval was for a different table; "update" — an app update
+     *  added calls (new functions, token coverage, family tables) that the
+     *  stored grant predates. Audited against the wallet's own granted-call
+     *  list, so shipping new features automatically flags stale approvals. */
+    const coverageGap = useMemo(() => {
+        if (!oneClickActive) return null;
+        const plan = grantPlanFor(tableChoice);
+        if (!grantCovers(plan.target)) return "table" as const;
+        const known = oneClickGrant?.calls;
+        if (!known || known.length === 0) return null; // unknown — don't false-alarm
+        const have = new Set(known.map((c) => c.toLowerCase()));
+        return plan.calls.every((c) => have.has(`${c.to.toLowerCase()}:${c.signature}`.toLowerCase()))
+            ? null
+            : ("update" as const);
+    }, [oneClickActive, grantPlanFor, tableChoice, grantCovers, oneClickGrant]);
+
+    /** One passkey approval; afterwards matching game calls skip the popup. */
+    const onEnableOneClick = () =>
+        run("oneclick", async () => {
+            const plan = grantPlanFor(tableChoice);
+            const {grantToken, grantSym, grantTargets, target} = plan;
+            const provider = (await liveConnector!.getProvider()) as MossProvider;
+            const expiry = Math.floor(Date.now() / 1000) + ONE_CLICK_HOURS * 3600;
+            // The plan IS the request: token approve + spend cap for the table's
+            // wager token, beacon fulfill, and every game call the plan lists.
+            const spendCap = parseEther(ONE_CLICK_SPEND_PER_DAY[grantSym] ?? "100");
             const request = provider.request({
                 method: "wallet_grantPermissions",
                 params: [
@@ -669,14 +718,7 @@ export default function Page() {
                         permissions: {
                             expiry,
                             permissions: {
-                                calls: [
-                                    ...(grantToken.toLowerCase() === CHIP_ADDRESS.toLowerCase()
-                                        ? [{to: CHIP_ADDRESS, signature: "faucet()"}]
-                                        : []),
-                                    {to: grantToken, signature: "approve(address,uint256)"},
-                                    {to: PROVIDER_ADDRESS, signature: "fulfill(uint256,bytes)"},
-                                    ...tableCalls,
-                                ],
+                                calls: plan.calls,
                                 spend: [
                                     {limit: spendCap, period: "day", token: grantToken},
                                     {limit: parseEther(ONE_CLICK_GAS_PER_DAY), period: "day"},
@@ -702,15 +744,19 @@ export default function Page() {
             ])) as {status?: string};
             if (res?.status !== "approved") throw new Error("permission grant was not approved");
             const targets = Array.from(
-                new Set([
-                    ...(oneClickGrant?.targets ?? []),
-                    ...[grantToken, PROVIDER_ADDRESS, target, ...grantTargets].map((a) =>
+                new Set(
+                    [grantToken, PROVIDER_ADDRESS, target, ...grantTargets].map((a) =>
                         a.toLowerCase(),
                     ),
-                ]),
+                ),
             );
-            localStorage.setItem(oneClickKey, JSON.stringify({expiry, targets}));
-            setOneClickGrant({expiry, targets});
+            // What was requested is what was granted (wallet keeps ONE grant, so
+            // no merge with older targets); wallet_getPermissions re-confirms.
+            const calls = plan.calls.map((c) => `${c.to.toLowerCase()}:${c.signature}`);
+            localStorage.setItem(oneClickKey, JSON.stringify({expiry, targets, calls}));
+            setOneClickGrant({expiry, targets, calls});
+            setSilentIssue(null);
+            void refreshGrant();
             return null;
         });
 
@@ -1029,12 +1075,12 @@ export default function Page() {
 
             {isMoss && !wrongNetwork && (
                 <div className="panel row">
-                    {oneClickActive &&
-                    !grantCovers(tableChoice === "v1" ? TABLE_ADDRESS : tableChoice) ? (
+                    {oneClickActive && coverageGap !== null ? (
                         <>
                             <span className="status">
-                                ⚡ 1-click play is on, but your approval predates this table.
-                                Approve once (passkey) to cover this table too.
+                                {coverageGap === "table"
+                                    ? "⚡ 1-click play is on, but your approval predates this table. Approve once (passkey) to cover this table too."
+                                    : "⚡ 1-click play is on, but an app update added new actions your approval predates — re-approve once (passkey) to keep everything silent."}
                             </span>
                             <button className="pulse" disabled={!!busy} onClick={onEnableOneClick}>
                                 {busy === "oneclick" ? "Check the wallet…" : "⚡ Re-approve 1-click"}
