@@ -34,6 +34,7 @@ import {Chat} from "./chat.tsx";
 import {CardView, TotalBadge, fmt} from "./ui.tsx";
 import {Lobby, type TableChoice} from "./lobby.tsx";
 import {useLiveRounds, joinableRound} from "./live.tsx";
+import {PresencePanel} from "./presence.tsx";
 import {V2Table} from "./v2table.tsx";
 import {InfiniteTable} from "./infinite.tsx";
 import {StatsPanel} from "./stats.tsx";
@@ -1219,6 +1220,7 @@ export default function Page() {
 
             <StatsPanel address={address} />
 
+            <PresencePanel tableChoice={tableChoice} onSelect={setTableChoice} mainWallet={address} />
             <Chat />
 
             <div className="panel status">

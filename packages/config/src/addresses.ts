@@ -34,6 +34,9 @@ export interface BlackjackDeployment {
     }[];
     /** Decentralization phase: OZ TimelockController holding every admin role. */
     timelock?: Address;
+    /** Ownerless presence beacon (who's online), pinged by chat burner keys. */
+    presence?: Address;
+    presenceDeployBlock?: bigint;
     /** Phase D: shared multiplayer InfiniteBlackjack tables, one per asset. */
     infiniteTables?: {symbol: string; token: Address; address: Address}[];
     /**
@@ -63,6 +66,9 @@ export const DEPLOYMENTS: Partial<Record<number, BlackjackDeployment>> = {
         // Decentralization (2026-08-08): all table/pool admin behind a 12 h
         // public timelock (deployer = sole proposer, open execution).
         timelock: "0xeD7d0351Fdc1aa7c5aE6395e393fcA43BE25d3f3",
+        // Presence beacon (2026-08-08): ownerless, event-only pings.
+        presence: "0xbfC42dee38778b40AA96CB07eA5DFb5b6f2b248E",
+        presenceDeployBlock: 26523037n,
         // Provenance-recording factories (2026-08-08, isFromFactory) — deployments
         // are byte-identical to the reviewed engines, the tier-1 trust basis.
         factory: "0xA29cafeD124864D38dabFe8Fe803cdE61b111Fd0",

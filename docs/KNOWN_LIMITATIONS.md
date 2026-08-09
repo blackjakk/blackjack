@@ -96,3 +96,8 @@
     the committed hit-to-target strategy is the sound (and standard-strategy-
     expressible) alternative. Play style is slightly less granular than the
     per-hand tables.
+18. **Presence is honest self-reporting.** The Presence beacon (ownerless,
+    event-only) shows who *says* they're online and where; it secures nothing
+    and pays nothing, so faking or omitting it buys nothing. Pings ride the
+    gasless chat burner key — users who never funded chat appear only through
+    their onchain play, not in the roster. Cooldown-limited (20 s/sender).

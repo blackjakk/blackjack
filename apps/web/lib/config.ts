@@ -83,6 +83,10 @@ export const VAULTS: Record<string, Address> = Object.fromEntries([
 /** Real-asset tables (USDm / ETH-as-WETH / MEGA), each with its own vault. */
 export const ASSET_TABLES = live?.assetTables ?? [];
 
+/** Ownerless presence beacon (who's online). Empty when not deployed. */
+export const PRESENCE_ADDRESS = (live?.presence ?? "") as Address;
+export const PRESENCE_DEPLOY_BLOCK = live?.presenceDeployBlock ?? 0n;
+
 /** Split-capable V3 tables (extended ABI). */
 export const V3_TABLES: {name: string; address: Address}[] = live?.v3Tables ?? [];
 

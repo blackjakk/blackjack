@@ -206,6 +206,11 @@ their sole LP — verified onchain — and replaced. All Sourcify exact_match:
 | hpETH | `0xbae7289F86E4893a69c6bD73E46EC2547C6FA829` | ETH Infinite + classic (0.25 WETH) |
 | hpMEGA | `0x5d151dDb5ef6Fb2F9F2a290411F44eD77014c550` | MEGA Infinite + classic |
 
+Presence beacon (2026-08-08, social layer): ownerless `Presence`
+`0xbfC42dee38778b40AA96CB07eA5DFb5b6f2b248E` (Sourcify-verified) — event-only
+"I'm online at table X" pings from chat burner keys, 20 s cooldown; UIs derive
+the who's-online roster from recent Ping events.
+
 CHIP/ETH funds moved through the v1 pools' own 1 h exit queues
 (`GovernedPools.runTestnet` started the exits, `finishFunded` claimed,
 re-pointed treasuries and re-deposited). Retired v1 pools: 0xDD79…4Bc0,
