@@ -15,7 +15,7 @@ import {
     megaethTestnet,
 } from "@blackjack/config";
 import {unpackCards, handValue, OutcomeNames, fetchBeaconSignature} from "@blackjack/sdk";
-import {PROVIDER_ADDRESS, txUrl} from "../lib/config.ts";
+import {PROVIDER_ADDRESS, txUrl, defaultWager} from "../lib/config.ts";
 import {VaultPanel} from "./vault.tsx";
 import {CardView, TotalBadge, fmt} from "./ui.tsx";
 
@@ -232,7 +232,7 @@ export function InfiniteTable({
         [publicClient, queryClient],
     );
 
-    const [wagerInput, setWagerInput] = useState("10");
+    const [wagerInput, setWagerInput] = useState(() => defaultWager(symbol));
     const [copied, setCopied] = useState(false);
     const onInvite = async () => {
         const url = new URL(window.location.href);
@@ -613,6 +613,7 @@ export function InfiniteTable({
                                 aria-label={`wager in ${symbol}`}
                                 style={{width: 90}}
                             />
+                            <span className="status">{symbol}</span>
                             <button disabled={!!busy} onClick={onBet}>
                                 {busy === "bet" ? "Placing…" : "Place bet"}
                             </button>

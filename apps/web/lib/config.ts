@@ -94,6 +94,12 @@ export function isV3Table(table: string): boolean {
     return V3_TABLES.some((t) => t.address.toLowerCase() === table.toLowerCase());
 }
 
+/** Sensible starting wager per token (display units) — ETH tables are
+ *  three orders of magnitude off from CHIP's "10". */
+export function defaultWager(symbol: string): string {
+    return {CHIP: "10", USDm: "5", MEGA: "5", ETH: "0.002"}[symbol] ?? "1";
+}
+
 /** Wager token + display symbol for any known table. */
 export function tableToken(table: string): {token: Address; symbol: string} {
     const at = ASSET_TABLES.find((t) => t.table.toLowerCase() === table.toLowerCase());

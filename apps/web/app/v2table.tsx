@@ -16,7 +16,7 @@ import {
     OutcomeNames,
     fetchBeaconSignature,
 } from "@blackjack/sdk";
-import {PROVIDER_ADDRESS, txUrl} from "../lib/config.ts";
+import {PROVIDER_ADDRESS, txUrl, defaultWager} from "../lib/config.ts";
 import {VaultPanel} from "./vault.tsx";
 import {CardView, TotalBadge, fmt} from "./ui.tsx";
 import {rulesSummary} from "./lobby.tsx";
@@ -212,7 +212,7 @@ export function V2Table({
         [publicClient, queryClient],
     );
 
-    const [wagerInput, setWagerInput] = useState("10");
+    const [wagerInput, setWagerInput] = useState(() => defaultWager(symbol));
     /** Fresh allowance read: the polled hook can be stale, and MOSS auto-revokes
      *  standalone approvals — bundling approve+action into one atomic batch is
      *  the only reliable shape there. */
@@ -528,6 +528,7 @@ export function V2Table({
                             aria-label={`wager in ${symbol}`}
                             style={{width: 90}}
                         />
+                        <span className="status">{symbol}</span>
                         <button disabled={!!busy} onClick={onBet}>
                             {busy === "bet" ? "Placing…" : "Place bet"}
                         </button>
