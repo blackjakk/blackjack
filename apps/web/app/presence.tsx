@@ -3,8 +3,22 @@
 import {useEffect, useRef, useState} from "react";
 import {useReadContracts} from "wagmi";
 import type {Address} from "viem";
-import {presenceAbi, tableChatAbi, DEPLOYMENTS, megaethTestnet} from "@blackjack/config";
-import {PRESENCE_ADDRESS} from "../lib/config.ts";
+import {
+    presenceAbi,
+    tableChatAbi,
+    blackjackTableV2Abi,
+    infiniteBlackjackAbi,
+    DEPLOYMENTS,
+    megaethTestnet,
+} from "@blackjack/config";
+import {
+    PRESENCE_ADDRESS,
+    TABLE_ADDRESS,
+    V2_TABLES,
+    V3_TABLES,
+    ASSET_TABLES,
+    INFINITE_TABLES,
+} from "../lib/config.ts";
 import {burnerClients, burnerWrite} from "../lib/burner.ts";
 import {tickerTableName} from "./ticker.tsx";
 import type {TableChoice} from "./lobby.tsx";
@@ -12,7 +26,8 @@ import type {TableChoice} from "./lobby.tsx";
 const CHAT_ADDRESS = (DEPLOYMENTS[megaethTestnet.id]?.chat ?? "") as Address;
 const ZERO = "0x0000000000000000000000000000000000000000";
 const PING_EVERY = 60; // seconds between own pings
-const ONLINE_WINDOW = 150; // seen within this = online
+const ONLINE_WINDOW = 150; // pinged within this = online
+const ACTIVITY_WINDOW = 300; // bet within this = present even without a funded burner
 
 export interface OnlineUser {
     key: string; // burner (ping sender) — the chat identity
@@ -87,14 +102,36 @@ export function usePresence(tableChoice: TableChoice, mainWallet: Address | unde
                           : 0n;
                 if (from > latest) return;
                 lastBlock.current = latest;
-                const logs = await pub.getContractEvents({
-                    address: PRESENCE_ADDRESS,
-                    abi: presenceAbi,
-                    eventName: "Ping",
-                    fromBlock: from,
-                    toBlock: latest,
-                });
-                if (logs.length === 0 || stopped) return;
+                const perHand = [
+                    TABLE_ADDRESS,
+                    ...V2_TABLES.map((t) => t.address),
+                    ...V3_TABLES.map((t) => t.address),
+                    ...ASSET_TABLES.map((t) => t.table),
+                ];
+                const [logs, bets, games] = await Promise.all([
+                    pub.getContractEvents({
+                        address: PRESENCE_ADDRESS,
+                        abi: presenceAbi,
+                        eventName: "Ping",
+                        fromBlock: from,
+                        toBlock: latest,
+                    }),
+                    pub.getContractEvents({
+                        address: INFINITE_TABLES.map((t) => t.address),
+                        abi: infiniteBlackjackAbi,
+                        eventName: "BetPlaced",
+                        fromBlock: from,
+                        toBlock: latest,
+                    }),
+                    pub.getContractEvents({
+                        address: perHand,
+                        abi: blackjackTableV2Abi,
+                        eventName: "GameCreated",
+                        fromBlock: from,
+                        toBlock: latest,
+                    }),
+                ]);
+                if (stopped) return;
                 const stamp = Math.floor(Date.now() / 1000);
                 for (const log of logs) {
                     const a = log.args as {sender?: Address; account?: Address; table?: Address};
@@ -103,6 +140,18 @@ export function usePresence(tableChoice: TableChoice, mainWallet: Address | unde
                         key: a.sender.toLowerCase(),
                         account: a.account && a.account !== ZERO ? a.account : null,
                         table: a.table && a.table !== ZERO ? a.table : null,
+                        lastSeen: stamp,
+                    });
+                }
+                // Anyone actively betting is present at that table even without
+                // a funded chat burner (keyed separately, deduped at render).
+                for (const log of [...bets, ...games] as {args: unknown; address: string}[]) {
+                    const a = log.args as {player?: Address};
+                    if (!a.player) continue;
+                    seenAt.current.set(`act:${a.player.toLowerCase()}`, {
+                        key: `act:${a.player.toLowerCase()}`,
+                        account: a.player,
+                        table: log.address as Address,
                         lastSeen: stamp,
                     });
                 }
@@ -119,9 +168,20 @@ export function usePresence(tableChoice: TableChoice, mainWallet: Address | unde
     }, []);
 
     useEffect(() => {
+        const all = [...seenAt.current.values()];
+        const pingedAccounts = new Set(
+            all
+                .filter((u) => !u.key.startsWith("act:") && u.account)
+                .map((u) => (u.account as string).toLowerCase()),
+        );
         setRoster(
-            [...seenAt.current.values()]
-                .filter((u) => now - u.lastSeen < ONLINE_WINDOW)
+            all
+                .filter((u) =>
+                    u.key.startsWith("act:")
+                        ? now - u.lastSeen < ACTIVITY_WINDOW
+                          && !pingedAccounts.has((u.account as string).toLowerCase())
+                        : now - u.lastSeen < ONLINE_WINDOW,
+                )
                 .sort((a, b) => b.lastSeen - a.lastSeen),
         );
     }, [now]);
@@ -149,7 +209,7 @@ export function PresencePanel({
                     address: CHAT_ADDRESS,
                     abi: tableChatAbi,
                     functionName: "nicknameOf",
-                    args: [u.key as Address],
+                    args: [u.key.startsWith("act:") ? (u.account as Address) : (u.key as Address)],
                 }) as const,
         ),
         query: {refetchInterval: 60_000, enabled: roster.length > 0 && CHAT_ADDRESS.length === 42},
