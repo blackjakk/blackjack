@@ -596,13 +596,36 @@ export default function Page() {
 
     const onFaucet = () => run("faucet", () => writeTx({...chip, functionName: "faucet"}));
 
-    /** One passkey approval; afterwards matching game calls skip the popup. */
+    /** Grant call-scopes per table kind. */
+    const perHandSigs = (t: string) => [
+        {to: t, signature: "placeBet(uint256)"},
+        {to: t, signature: "hit(uint256)"},
+        {to: t, signature: "stand(uint256)"},
+        {to: t, signature: "double(uint256)"},
+        {to: t, signature: "surrender(uint256)"},
+        {to: t, signature: "cancelTimedOutGame(uint256)"},
+        {to: t, signature: "fundHouse(uint256)"},
+        ...(isV3Table(t) ? [{to: t, signature: "split(uint256)"}] : []),
+    ];
+    const infiniteSigs = (t: string) => [
+        {to: t, signature: "placeBet(uint256)"},
+        {to: t, signature: "act(uint8,uint8)"},
+        {to: t, signature: "lockDeal()"},
+        {to: t, signature: "lockActions()"},
+        {to: t, signature: "settle(uint256)"},
+        {to: t, signature: "cancelRound(uint256)"},
+        {to: t, signature: "refund(uint256,uint256)"},
+        {to: t, signature: "withdrawDeferred()"},
+        {to: t, signature: "fundHouse(uint256)"},
+    ];
+
     /**
      * One passkey approval; afterwards matching game calls skip the popup.
-     * Scoped to the chip + provider + the CURRENTLY SELECTED table only: the
-     * small per-table payload is the shape the wallet's approval sheet is known
-     * to render reliably (a 29-entry all-tables list has been seen to stall it),
-     * and coverage merges as the player approves more tables.
+     * Scope: CHIP tables are granted individually (the all-tables list is the
+     * shape known to stall the wallet's approval sheet), but the real-asset
+     * families (USDm/ETH/MEGA) each have only TWO tables — classic + infinite —
+     * so one approval covers the whole asset and switching between its tables
+     * never downgrades to popups.
      */
     const onEnableOneClick = () =>
         run("oneclick", async () => {
@@ -610,6 +633,17 @@ export default function Page() {
             const target = (v1 ? TABLE_ADDRESS : tableChoice) as `0x${string}`;
             const provider = (await liveConnector!.getProvider()) as MossProvider;
             const expiry = Math.floor(Date.now() / 1000) + ONE_CLICK_HOURS * 3600;
+            const {symbol: grantSym} = tableToken(target);
+            const assetPair =
+                grantSym !== "CHIP"
+                    ? {
+                          classic: ASSET_TABLES.find((t) => t.symbol === grantSym)?.table,
+                          infinite: INFINITE_TABLES.find((t) => t.symbol === grantSym)?.address,
+                      }
+                    : null;
+            const grantTargets: string[] = assetPair
+                ? ([assetPair.classic, assetPair.infinite].filter(Boolean) as string[])
+                : [target];
             const tableCalls = v1
                 ? [
                       {to: target, signature: "placeBet(uint256)"},
@@ -618,30 +652,9 @@ export default function Page() {
                       {to: target, signature: "double()"},
                       {to: target, signature: "cancelTimedOutGame(uint256)"},
                   ]
-                : isInfiniteTable(target)
-                  ? [
-                        {to: target, signature: "placeBet(uint256)"},
-                        {to: target, signature: "act(uint8,uint8)"},
-                        {to: target, signature: "lockDeal()"},
-                        {to: target, signature: "lockActions()"},
-                        {to: target, signature: "settle(uint256)"},
-                        {to: target, signature: "cancelRound(uint256)"},
-                        {to: target, signature: "refund(uint256,uint256)"},
-                        {to: target, signature: "withdrawDeferred()"},
-                        {to: target, signature: "fundHouse(uint256)"},
-                    ]
-                  : [
-                        {to: target, signature: "placeBet(uint256)"},
-                        {to: target, signature: "hit(uint256)"},
-                        {to: target, signature: "stand(uint256)"},
-                        {to: target, signature: "double(uint256)"},
-                        {to: target, signature: "surrender(uint256)"},
-                        {to: target, signature: "cancelTimedOutGame(uint256)"},
-                        {to: target, signature: "fundHouse(uint256)"},
-                        ...(isV3Table(target)
-                            ? [{to: target, signature: "split(uint256)"}]
-                            : []),
-                    ];
+                : grantTargets.flatMap((t) =>
+                      isInfiniteTable(t) ? infiniteSigs(t) : perHandSigs(t),
+                  );
             // Grant the SELECTED table's wager token (CHIP tables aren't the only
             // ones): approve + a per-day spend cap on that token, faucet only when
             // it's the CHIP faucet token.
@@ -691,7 +704,9 @@ export default function Page() {
             const targets = Array.from(
                 new Set([
                     ...(oneClickGrant?.targets ?? []),
-                    ...[grantToken, PROVIDER_ADDRESS, target].map((a) => a.toLowerCase()),
+                    ...[grantToken, PROVIDER_ADDRESS, target, ...grantTargets].map((a) =>
+                        a.toLowerCase(),
+                    ),
                 ]),
             );
             localStorage.setItem(oneClickKey, JSON.stringify({expiry, targets}));
@@ -1021,8 +1036,8 @@ export default function Page() {
                                 ⚡ 1-click play is on, but your approval predates this table.
                                 Approve once (passkey) to cover this table too.
                             </span>
-                            <button disabled={!!busy} onClick={onEnableOneClick}>
-                                {busy === "oneclick" ? "Check the wallet…" : "Re-approve 1-click"}
+                            <button className="pulse" disabled={!!busy} onClick={onEnableOneClick}>
+                                {busy === "oneclick" ? "Check the wallet…" : "⚡ Re-approve 1-click"}
                             </button>
                         </>
                     ) : oneClickActive ? (
@@ -1050,9 +1065,9 @@ export default function Page() {
                         <>
                             <span className="status">
                                 Tired of approving every move? <strong>1-click play</strong> asks for
-                                one passkey approval, then bets/hits/stands run silently at this table. Scoped to
-                                this table only, {ONE_CLICK_CHIP_PER_DAY} CHIP/day cap,{" "}
-                                {ONE_CLICK_HOURS}h expiry, revocable anytime.
+                                one passkey approval, then bets/hits/stands run silently. CHIP tables are
+                                approved one at a time; USDm/ETH/MEGA approvals cover BOTH tables of
+                                the asset. Daily spend caps, {ONE_CLICK_HOURS}h expiry, revocable anytime.
                             </span>
                             <button disabled={!!busy} onClick={onEnableOneClick}>
                                 {busy === "oneclick" ? "Check the wallet…" : "⚡ Enable 1-click play"}
