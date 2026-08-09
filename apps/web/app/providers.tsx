@@ -10,6 +10,15 @@ import {QueryClient, QueryClientProvider} from "@tanstack/react-query";
 import {megaethTestnet} from "@blackjack/config";
 import {activeChain} from "../lib/config.ts";
 
+// E2E seam: a page can install a scripted MOSS stand-in on window BEFORE the
+// app boots (same trust model as window.ethereum — page scripts already own
+// every injected provider). It replaces the real hosted-wallet connector under
+// the same id, so tests can drive the 1-click grant flows deterministically.
+const mossTestProvider =
+    typeof window !== "undefined"
+        ? (window as {__mossTestProvider?: unknown}).__mossTestProvider
+        : undefined;
+
 // MOSS (MegaETH's embedded wallet) only serves the hosted networks, so the
 // connector is omitted when the app points at a local anvil chain.
 const wagmiConfig = createConfig({
@@ -18,9 +27,19 @@ const wagmiConfig = createConfig({
         activeChain.id === megaethTestnet.id
             ? [
                   injected(),
-                  // The hosted wallet app can take longer than the SDK's 10s
-                  // default handshake window to boot on a cold cache.
-                  mossWallet({network: "testnet", handshakeTimeoutMs: 30_000}),
+                  mossTestProvider
+                      ? injected({
+                            target: () => ({
+                                id: "mossWallet",
+                                name: "MOSS (test double)",
+                                provider: (
+                                    window as {__mossTestProvider?: unknown}
+                                ).__mossTestProvider as never,
+                            }),
+                        })
+                      : // The hosted wallet app can take longer than the SDK's 10s
+                        // default handshake window to boot on a cold cache.
+                        mossWallet({network: "testnet", handshakeTimeoutMs: 30_000}),
               ]
             : [injected()],
     transports: {[activeChain.id]: http()},

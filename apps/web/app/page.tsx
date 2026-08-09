@@ -96,6 +96,12 @@ const mossAbi = (abi: unknown): unknown =>
         key === "internalType" ? undefined : value,
     );
 
+/** Canonical form of a granted call for set-comparison: lowercase, no
+ *  whitespace. Requested plans and wallet_getPermissions reports are both run
+ *  through this so a formatting difference can never read as a coverage gap. */
+const normCall = (to: string, signature: string): string =>
+    `${to}:${signature}`.toLowerCase().replace(/\s+/g, "");
+
 /** Human label for a 1-click grant target address (token, provider or table). */
 function grantTargetLabel(addr: string): string {
     const a = addr.toLowerCase();
@@ -193,27 +199,29 @@ export default function Page() {
     // silently: scoped to this table's contracts, capped per day, 24h expiry.
     const isMoss = liveConnector?.id === "mossWallet";
     const oneClickKey = `moss-oneclick:${address ?? ""}`;
-    const [oneClickGrant, setOneClickGrant] = useState<{
+    type GrantRecord = {
         expiry: number;
         targets: string[];
-        /** normalized "to:signature" pairs the wallet says are granted (may be
-         *  absent on old caches until the next wallet_getPermissions refresh) */
+        /** normalized "to:signature" pairs granted (union of what the approval
+         *  sheet approved and what wallet_getPermissions reports; may be absent
+         *  on old caches until the next refresh) */
         calls?: string[];
-    } | null>(null);
-    const readCachedGrant = useCallback((): {
-        expiry: number;
-        targets: string[];
-        calls?: string[];
-    } | null => {
+        /** unix seconds of the in-app approval that produced this record —
+         *  absent when the record came purely from a wallet report */
+        grantedAt?: number;
+    };
+    const [oneClickGrant, setOneClickGrant] = useState<GrantRecord | null>(null);
+    const readCachedGrant = useCallback((): GrantRecord | null => {
         const raw = localStorage.getItem(oneClickKey);
         if (!raw) return null;
         try {
-            const p = JSON.parse(raw) as {expiry?: number; targets?: string[]; calls?: string[]};
+            const p = JSON.parse(raw) as Partial<GrantRecord>;
             if (p && typeof p.expiry === "number") {
                 return {
                     expiry: p.expiry,
                     targets: (p.targets ?? []).map((t) => t.toLowerCase()),
                     calls: p.calls,
+                    grantedAt: p.grantedAt,
                 };
             }
         } catch {
@@ -230,8 +238,15 @@ export default function Page() {
             : null;
     }, [oneClickKey]);
 
-    /** The wallet is the source of truth for what a grant covers; the localStorage
-     *  record is only a boot-time cache (approvals can happen out-of-band). */
+    /** Reconcile the local grant record with wallet_getPermissions. The wallet
+     *  is the long-run source of truth (approvals can happen out-of-band), but
+     *  its report can LAG a passkey approval that just happened in this tab —
+     *  briefly returning the previous grant, or none at all. Overwriting the
+     *  fresh record with that stale report is what looped the re-approve
+     *  banner, so: reports older than the record are ignored (every new grant
+     *  has a strictly later expiry), a report of the SAME grant merges as a
+     *  union with what the approval sheet approved, and a "no grant" report
+     *  within minutes of an in-app approval is treated as the same lag. */
     const refreshGrant = useCallback(async () => {
         if (!isMoss || !address || !liveConnector) return;
         try {
@@ -245,17 +260,34 @@ export default function Page() {
                   }
                 | undefined;
             const p = res?.permissions;
+            const cached = readCachedGrant();
             if (p && p.expiry > Date.now() / 1000 + 60 && p.permissions?.calls?.length) {
+                const reported = p.permissions.calls.map((c) => normCall(c.to, c.signature));
+                console.info("[1-click] wallet reports grant:", p.expiry, reported);
+                if (cached && cached.expiry > p.expiry + 5) return; // stale report
+                const sameGrant = cached !== null && Math.abs(cached.expiry - p.expiry) <= 5;
+                const calls = Array.from(
+                    new Set([...reported, ...(sameGrant ? (cached.calls ?? []) : [])]),
+                );
                 const targets = Array.from(
-                    new Set(p.permissions.calls.map((c) => c.to.toLowerCase())),
+                    new Set([
+                        ...calls.map((c) => c.split(":")[0]!),
+                        ...(sameGrant ? cached.targets : []),
+                    ]),
                 );
-                const calls = p.permissions.calls.map(
-                    (c) => `${c.to.toLowerCase()}:${c.signature}`,
-                );
-                const grant = {expiry: p.expiry, targets, calls};
+                const grant: GrantRecord = {
+                    expiry: p.expiry,
+                    targets,
+                    calls,
+                    ...(sameGrant && cached.grantedAt ? {grantedAt: cached.grantedAt} : {}),
+                };
                 localStorage.setItem(oneClickKey, JSON.stringify(grant));
                 setOneClickGrant(grant);
             } else if (p === null || p === undefined) {
+                const justApproved =
+                    cached?.grantedAt !== undefined
+                    && Date.now() / 1000 - cached.grantedAt < 180;
+                if (justApproved) return; // wallet cache lag, not a revoke
                 // No active grant wallet-side; drop any stale cache.
                 localStorage.removeItem(oneClickKey);
                 setOneClickGrant(null);
@@ -263,7 +295,7 @@ export default function Page() {
         } catch {
             /* wallet unreachable — keep whatever the cache said */
         }
-    }, [isMoss, address, liveConnector, oneClickKey]);
+    }, [isMoss, address, liveConnector, oneClickKey, readCachedGrant]);
 
     useEffect(() => {
         if (!isMoss || !address) return setOneClickGrant(null);
@@ -684,21 +716,23 @@ export default function Page() {
         [],
     );
 
-/** Why the active grant is insufficient at the current table, if it is:
-     *  "table" — approval was for a different table; "update" — an app update
-     *  added calls (new functions, token coverage, family tables) that the
-     *  stored grant predates. Audited against the wallet's own granted-call
-     *  list, so shipping new features automatically flags stale approvals. */
+    /** Why the active grant is insufficient at the current table, if it is:
+     *  kind "table" — approval was for a different table; kind "update" — an
+     *  app update added calls (new functions, token coverage, family tables)
+     *  that the stored grant predates, with the exact missing pairs listed so
+     *  a persistent flag is diagnosable instead of mysterious. */
     const coverageGap = useMemo(() => {
         if (!oneClickActive) return null;
         const plan = grantPlanFor(tableChoice);
-        if (!grantCovers(plan.target)) return "table" as const;
+        if (!grantCovers(plan.target)) return {kind: "table" as const, missing: [] as string[]};
         const known = oneClickGrant?.calls;
         if (!known || known.length === 0) return null; // unknown — don't false-alarm
-        const have = new Set(known.map((c) => c.toLowerCase()));
-        return plan.calls.every((c) => have.has(`${c.to.toLowerCase()}:${c.signature}`.toLowerCase()))
-            ? null
-            : ("update" as const);
+        const have = new Set(known.map((c) => c.toLowerCase().replace(/\s+/g, "")));
+        const missing = plan.calls
+            .map((c) => normCall(c.to, c.signature))
+            .filter((c) => !have.has(c));
+        if (missing.length > 0) console.warn("[1-click] grant is missing:", missing);
+        return missing.length === 0 ? null : {kind: "update" as const, missing};
     }, [oneClickActive, grantPlanFor, tableChoice, grantCovers, oneClickGrant]);
 
     /** One passkey approval; afterwards matching game calls skip the popup. */
@@ -751,12 +785,16 @@ export default function Page() {
                 ),
             );
             // What was requested is what was granted (wallet keeps ONE grant, so
-            // no merge with older targets); wallet_getPermissions re-confirms.
-            const calls = plan.calls.map((c) => `${c.to.toLowerCase()}:${c.signature}`);
-            localStorage.setItem(oneClickKey, JSON.stringify({expiry, targets, calls}));
-            setOneClickGrant({expiry, targets, calls});
+            // no merge with older targets). grantedAt marks this record as
+            // approval-sheet ground truth so a lagging wallet report can't
+            // immediately downgrade it; a delayed refresh reconciles once the
+            // wallet has caught up.
+            const calls = plan.calls.map((c) => normCall(c.to, c.signature));
+            const grant = {expiry, targets, calls, grantedAt: Math.floor(Date.now() / 1000)};
+            localStorage.setItem(oneClickKey, JSON.stringify(grant));
+            setOneClickGrant(grant);
             setSilentIssue(null);
-            void refreshGrant();
+            setTimeout(() => void refreshGrant(), 5000);
             return null;
         });
 
@@ -1078,9 +1116,25 @@ export default function Page() {
                     {oneClickActive && coverageGap !== null ? (
                         <>
                             <span className="status">
-                                {coverageGap === "table"
+                                {coverageGap.kind === "table"
                                     ? "⚡ 1-click play is on, but your approval predates this table. Approve once (passkey) to cover this table too."
                                     : "⚡ 1-click play is on, but an app update added new actions your approval predates — re-approve once (passkey) to keep everything silent."}
+                                {coverageGap.missing.length > 0 && (
+                                    <>
+                                        <br />
+                                        missing:{" "}
+                                        {coverageGap.missing
+                                            .slice(0, 4)
+                                            .map((c) => {
+                                                const [to = "", sig = ""] = c.split(":");
+                                                return `${sig.split("(")[0]} @ ${grantTargetLabel(to)}`;
+                                            })
+                                            .join(" · ")}
+                                        {coverageGap.missing.length > 4
+                                            ? ` · +${coverageGap.missing.length - 4} more`
+                                            : ""}
+                                    </>
+                                )}
                             </span>
                             <button className="pulse" disabled={!!busy} onClick={onEnableOneClick}>
                                 {busy === "oneclick" ? "Check the wallet…" : "⚡ Re-approve 1-click"}
