@@ -38,6 +38,7 @@ import {PresencePanel} from "./presence.tsx";
 import {V2Table} from "./v2table.tsx";
 import {InfiniteTable} from "./infinite.tsx";
 import {StatsPanel} from "./stats.tsx";
+import {tickerTableName} from "./ticker.tsx";
 import {
     TABLE_ADDRESS,
     CHIP_ADDRESS,
@@ -94,6 +95,16 @@ const mossAbi = (abi: unknown): unknown =>
     JSON.parse(JSON.stringify(abi), (key, value: unknown) =>
         key === "internalType" ? undefined : value,
     );
+
+/** Human label for a 1-click grant target address (token, provider or table). */
+function grantTargetLabel(addr: string): string {
+    const a = addr.toLowerCase();
+    if (a === CHIP_ADDRESS.toLowerCase()) return "CHIP";
+    if (a === PROVIDER_ADDRESS.toLowerCase()) return "beacon provider";
+    const asset = ASSET_TABLES.find((t) => t.token.toLowerCase() === a);
+    if (asset) return asset.symbol === "ETH" ? "WETH" : asset.symbol;
+    return tickerTableName(addr);
+}
 
 const MOSS_BOOT_FAILURE = /did not respond|Failed to establish a connection to the MegaETH wallet/i;
 
@@ -244,6 +255,10 @@ export default function Page() {
         setOneClickGrant(readCachedGrant());
         void refreshGrant();
     }, [isMoss, address, readCachedGrant, refreshGrant]);
+    /** Why the last silent (1-click) call fell back to a wallet popup — surfaced
+     *  in the 1-click panel so coverage gaps are debuggable instead of mysterious. */
+    const [silentIssue, setSilentIssue] = useState<string | null>(null);
+
     const oneClickExpiry = oneClickGrant?.expiry ?? 0;
     const oneClickActive = isMoss && oneClickExpiry > Date.now() / 1000 + 60;
     const grantCovers = useCallback(
@@ -284,6 +299,8 @@ export default function Page() {
                     // surfacing a dead-end error. Explicit user cancels stay final.
                     const m = err instanceof Error ? err.message : String(err);
                     if (/cancel/i.test(m)) throw err;
+                    console.warn("[1-click] silent call fell back to popup:", m);
+                    setSilentIssue(`${args.functionName}: ${m.split("\n")[0]!.slice(0, 160)}`);
                     void refreshGrant();
                 }
             }
@@ -293,7 +310,7 @@ export default function Page() {
                 );
             return liveConnector?.id === "mossWallet" ? withMossRetry(doWrite) : doWrite();
         },
-        [writeContractAsync, liveConnector, oneClickActive, grantCovers, refreshGrant],
+        [writeContractAsync, liveConnector, oneClickActive, grantCovers, refreshGrant, setSilentIssue],
     );
 
     /**
@@ -345,6 +362,10 @@ export default function Page() {
                     const m = err instanceof Error ? err.message : String(err);
                     if (/cancel/i.test(m)) throw err;
                     if (!canSilent) throw err;
+                    console.warn("[1-click] silent batch fell back to popup:", m);
+                    setSilentIssue(
+                        `${calls.map((c) => c.functionName).join("+")}: ${m.split("\n")[0]!.slice(0, 160)}`,
+                    );
                     void refreshGrant();
                     return send(false);
                 }
@@ -356,7 +377,7 @@ export default function Page() {
             }
             return last;
         },
-        [isMoss, liveConnector, oneClickActive, grantCovers, refreshGrant, writeTx, publicClient],
+        [isMoss, liveConnector, oneClickActive, grantCovers, refreshGrant, writeTx, publicClient, setSilentIssue],
     );
     const wrongNetwork = isConnected && walletChainId !== activeChain.id;
     const {data: gasBalance} = useBalance({
@@ -1008,8 +1029,18 @@ export default function Page() {
                         <>
                             <span className="status">
                                 ⚡ <strong>1-click play is on</strong> — game moves go through without
-                                popups (max {ONE_CLICK_CHIP_PER_DAY} CHIP/day, expires{" "}
-                                {new Date(oneClickExpiry * 1000).toLocaleTimeString()}).
+                                popups (expires {new Date(oneClickExpiry * 1000).toLocaleTimeString()}).
+                                <br />
+                                covers:{" "}
+                                {(oneClickGrant?.targets ?? [])
+                                    .map((t) => grantTargetLabel(t))
+                                    .join(" · ")}
+                                {silentIssue && (
+                                    <>
+                                        <br />
+                                        ⚠️ last silent call fell back to a popup — {silentIssue}
+                                    </>
+                                )}
                             </span>
                             <button className="secondary" disabled={!!busy} onClick={onDisableOneClick}>
                                 {busy === "oneclick" ? "…" : "Turn off"}
