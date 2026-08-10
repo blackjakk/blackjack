@@ -66,12 +66,15 @@ const POLL = {refetchInterval: 1500} as const;
 const ONE_CLICK_HOURS = 24;
 const ONE_CLICK_CHIP_PER_DAY = "5000";
 const ONE_CLICK_GAS_PER_DAY = "0.01";
-/** Daily silent-spend cap per wager token (18-dec units as strings). */
+/** Daily silent-spend cap per wager token (18-dec units as strings). Sized for
+ *  a real session — roughly 200+ default-size bets — because a hit cap doesn't
+ *  pause 1-click, it turns EVERY remaining bet that day into a popup. The old
+ *  ETH cap (0.02 ≈ ten 0.002 bets) did exactly that. */
 const ONE_CLICK_SPEND_PER_DAY: Record<string, string> = {
     CHIP: ONE_CLICK_CHIP_PER_DAY,
-    USDm: "200",
-    MEGA: "200",
-    ETH: "0.02",
+    USDm: "1000",
+    MEGA: "1000",
+    ETH: "0.2",
 };
 
 type MossProvider = {
@@ -319,7 +322,11 @@ export default function Page() {
         async (args: Parameters<typeof writeContractAsync>[0]) => {
             if (oneClickActive && liveConnector && grantCovers(args.address as string)) {
                 // Silent path: wallet_callContract with silent:true uses the session
-                // grant; if the grant expired, fall back to the normal approval UI.
+                // grant. Deliberately NO silentUIApproveFallback — with it, a declined
+                // silent call opens the wallet's own sheet and the decline REASON is
+                // lost. Without it the wallet returns status:"error" with a human-
+                // readable reason (missing permission, spend cap, …), which we surface
+                // in the panel, then fall back to a normal approval popup ourselves.
                 try {
                 return await withMossRetry(async () => {
                     const provider = (await liveConnector.getProvider()) as MossProvider;
@@ -332,7 +339,6 @@ export default function Page() {
                                 functionName: args.functionName,
                                 args: args.args ?? [],
                                 silent: true,
-                                silentUIApproveFallback: true,
                             },
                         ],
                     })) as MossTxResult;
@@ -343,10 +349,10 @@ export default function Page() {
                 });
                 } catch (err) {
                     // A silent call the wallet won't run (missing/changed permission,
-                    // policy edge) degrades to a normal approval popup instead of
-                    // surfacing a dead-end error. Explicit user cancels stay final.
+                    // spend cap, policy edge) degrades to a normal approval popup
+                    // instead of a dead-end error. No UI was shown yet, so there is
+                    // no user cancel to honor here.
                     const m = err instanceof Error ? err.message : String(err);
-                    if (/cancel/i.test(m)) throw err;
                     console.warn("[1-click] silent call fell back to popup:", m);
                     setSilentIssue(`${args.functionName}: ${m.split("\n")[0]!.slice(0, 160)}`);
                     void refreshGrant();
@@ -391,7 +397,10 @@ export default function Page() {
                                 abi: mossAbi(c.abi),
                                 functionName: c.functionName,
                                 args: c.args ?? [],
-                                ...(silent ? {silent: true, silentUIApproveFallback: true} : {}),
+                                // No silentUIApproveFallback: a decline must come
+                                // back as status:"error" + reason (surfaced in the
+                                // panel); we then re-send interactively ourselves.
+                                ...(silent ? {silent: true} : {}),
                             })),
                         ],
                     })) as MossTxResult & {receipts?: {transactionHash: `0x${string}`}[]};
@@ -407,8 +416,10 @@ export default function Page() {
                 try {
                     return await withMossRetry(() => send(canSilent));
                 } catch (err) {
+                    // Interactive attempts (canSilent false) have nothing to fall
+                    // back to — including a user cancel, which stays final. A failed
+                    // SILENT attempt showed no UI, so always degrade it to a popup.
                     const m = err instanceof Error ? err.message : String(err);
-                    if (/cancel/i.test(m)) throw err;
                     if (!canSilent) throw err;
                     console.warn("[1-click] silent batch fell back to popup:", m);
                     setSilentIssue(
@@ -1154,9 +1165,17 @@ export default function Page() {
                                     <>
                                         <br />
                                         ⚠️ last silent call fell back to a popup — {silentIssue}
+                                        {/spend|limit|cap|exceed|budget/i.test(silentIssue)
+                                            ? " (looks like the daily spend cap — re-approving resets it)"
+                                            : ""}
                                     </>
                                 )}
                             </span>
+                            {silentIssue && (
+                                <button className="pulse" disabled={!!busy} onClick={onEnableOneClick}>
+                                    {busy === "oneclick" ? "Check the wallet…" : "⚡ Re-approve"}
+                                </button>
+                            )}
                             <button className="secondary" disabled={!!busy} onClick={onDisableOneClick}>
                                 {busy === "oneclick" ? "…" : "Turn off"}
                             </button>
