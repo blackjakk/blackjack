@@ -515,26 +515,37 @@ export function V2Table({
                 );
             })}
 
-            {canAddHand && (
-                <div className="panel row">
-                    <span className="status">
-                        {activeCount === 0 ? "Place a bet:" : `Add another hand (${activeCount}/${maxConcurrent?.toString()}):`}
-                    </span>
-                    <span className="row" style={{gap: 8}}>
-                        <input
-                            value={wagerInput}
-                            onChange={(e) => setWagerInput(e.target.value)}
-                            inputMode="decimal"
-                            aria-label={`wager in ${symbol}`}
-                            style={{width: 90}}
-                        />
-                        <span className="status">{symbol}</span>
-                        <button disabled={!!busy} onClick={onBet}>
-                            {busy === "bet" ? "Placing…" : "Place bet"}
-                        </button>
-                    </span>
-                </div>
-            )}
+            {canAddHand &&
+                (liquidity !== undefined && liquidity[2] === 0n ? (
+                    // Betting against an empty bankroll reverts onchain — say so
+                    // BEFORE the wallet popup instead of letting the tx bounce.
+                    <div className="panel row">
+                        <span className="status">
+                            🏦 This table can&apos;t take bets yet — its {symbol} bankroll is
+                            empty. Be the first LP: deposit {symbol} in the vault panel
+                            below and betting opens instantly.
+                        </span>
+                    </div>
+                ) : (
+                    <div className="panel row">
+                        <span className="status">
+                            {activeCount === 0 ? "Place a bet:" : `Add another hand (${activeCount}/${maxConcurrent?.toString()}):`}
+                        </span>
+                        <span className="row" style={{gap: 8}}>
+                            <input
+                                value={wagerInput}
+                                onChange={(e) => setWagerInput(e.target.value)}
+                                inputMode="decimal"
+                                aria-label={`wager in ${symbol}`}
+                                style={{width: 90}}
+                            />
+                            <span className="status">{symbol}</span>
+                            <button disabled={!!busy} onClick={onBet}>
+                                {busy === "bet" ? "Placing…" : "Place bet"}
+                            </button>
+                        </span>
+                    </div>
+                ))}
 
             {lastTx && (
                 <div className="status">

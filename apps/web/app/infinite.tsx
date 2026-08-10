@@ -598,7 +598,21 @@ export function InfiniteTable({
                     </div>
                 )}
 
-                {isConnected && betOpen && !(state === RS.BETTING && iAmIn) && (
+                {isConnected &&
+                    betOpen &&
+                    (liquidity as readonly [bigint, bigint, bigint] | undefined)?.[2] === 0n && (
+                        // An empty bankroll rejects every bet onchain — say so
+                        // BEFORE the wallet popup instead of letting the tx bounce.
+                        <div className="status" style={{marginTop: 10}}>
+                            🏦 This table can&apos;t take bets yet — its {symbol} bankroll is
+                            empty. Be the first LP: deposit {symbol} in the vault panel
+                            below and betting opens instantly.
+                        </div>
+                    )}
+                {isConnected &&
+                    betOpen &&
+                    !(state === RS.BETTING && iAmIn) &&
+                    (liquidity as readonly [bigint, bigint, bigint] | undefined)?.[2] !== 0n && (
                     <div className="row" style={{marginTop: 10}}>
                         <span className="status">
                             {state === RS.BETTING
