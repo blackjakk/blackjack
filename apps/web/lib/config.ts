@@ -100,9 +100,39 @@ export function defaultWager(symbol: string): string {
     return {CHIP: "10", USDm: "5", MEGA: "5", ETH: "0.002"}[symbol] ?? "1";
 }
 
-/** Wager token + display symbol for any known table. */
+/** Wager token + display symbol for any known table (classic AND infinite —
+ *  the infinite lookup was missing for a while, which silently resolved the
+ *  USDm/ETH/MEGA Infinite tables to CHIP and misscoped approvals + 1-click
+ *  grants made from those tables). */
 export function tableToken(table: string): {token: Address; symbol: string} {
     const at = ASSET_TABLES.find((t) => t.table.toLowerCase() === table.toLowerCase());
     if (at) return {token: at.token, symbol: at.symbol};
+    const inf = INFINITE_TABLES.find((t) => t.address.toLowerCase() === table.toLowerCase());
+    if (inf) return {token: inf.token, symbol: inf.symbol};
     return {token: CHIP_ADDRESS, symbol: "CHIP"};
+}
+
+// ------------------------------------------------------------- asset families
+
+/** Every wager asset: play-money CHIP plus each real-asset family. */
+export const ASSETS: {symbol: string; token: Address}[] = [
+    {symbol: "CHIP", token: CHIP_ADDRESS},
+    ...ASSET_TABLES.map((t) => ({symbol: t.symbol, token: t.token})),
+];
+
+/** Which asset family a table choice belongs to ("v1" is a CHIP table). */
+export function assetOfTable(choice: string): string {
+    return choice === "v1" ? "CHIP" : tableToken(choice).symbol;
+}
+
+/** Landing table when switching to an asset: its Classic table. */
+export function defaultTableForAsset(symbol: string): Address | "v1" {
+    if (symbol === "CHIP") {
+        return hasV2 && V2_TABLES.length > 0 ? V2_TABLES[0]!.address : "v1";
+    }
+    return (
+        ASSET_TABLES.find((t) => t.symbol === symbol)?.table ??
+        INFINITE_TABLES.find((t) => t.symbol === symbol)?.address ??
+        "v1"
+    );
 }

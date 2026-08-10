@@ -40,15 +40,20 @@ export function rulesSummary(r: Rules): string {
         .join(" · ");
 }
 
-/** Table picker: curated launch tables + community tables from the open registry. */
+/** Table picker: curated launch tables + community tables from the open
+ *  registry, filtered to one asset family at a time (the asset dropdown above
+ *  the lobby switches families). */
 export function Lobby({
     selected,
     onSelect,
     live = [],
+    asset = "CHIP",
 }: {
     selected: TableChoice;
     onSelect: (t: TableChoice) => void;
     live?: LiveRound[];
+    /** Asset family to show ("CHIP" | "USDm" | "ETH" | "MEGA"). */
+    asset?: string;
 }) {
     const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
     useEffect(() => {
@@ -107,18 +112,21 @@ export function Lobby({
 
     return (
         <div className="panel">
-            <div className="hand-title">Tables</div>
+            <div className="hand-title">{asset} tables</div>
             <div className="lobby">
-                <button
-                    className={`table-card${selected === "v1" ? " active-table" : ""}`}
-                    onClick={() => onSelect("v1")}
-                >
-                    <strong>Original (v1)</strong>
-                    <span className="sub">
-                        dealer stands on 17 · blackjack pays 3:2 · double any 2 · single hand
-                    </span>
-                </button>
+                {asset === "CHIP" && (
+                    <button
+                        className={`table-card${selected === "v1" ? " active-table" : ""}`}
+                        onClick={() => onSelect("v1")}
+                    >
+                        <strong>Original (v1)</strong>
+                        <span className="sub">
+                            dealer stands on 17 · blackjack pays 3:2 · double any 2 · single hand
+                        </span>
+                    </button>
+                )}
                 {tables.map((t, i) => {
+                    if (t.symbol !== asset) return null;
                     const rules = infos?.[i * 4]?.result as Rules | undefined;
                     const liq = infos?.[i * 4 + 1]?.result as
                         | readonly [bigint, bigint, bigint]

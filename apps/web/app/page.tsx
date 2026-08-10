@@ -8,6 +8,7 @@ import {
     useDisconnect,
     usePublicClient,
     useReadContract,
+    useReadContracts,
     useSwitchChain,
     useWatchContractEvent,
     useWriteContract,
@@ -58,6 +59,10 @@ import {
     isInfiniteTable,
     INFINITE_TABLES,
     hasV2,
+    ASSETS,
+    assetOfTable,
+    defaultTableForAsset,
+    defaultWager,
 } from "../lib/config.ts";
 
 const POLL = {refetchInterval: 1500} as const;
@@ -494,16 +499,37 @@ export default function Page() {
     const [tableChoice, setTableChoice] = useState<TableChoice>(
         hasV2 && V2_TABLES.length > 0 ? V2_TABLES[0]!.address : "v1",
     );
+    /** Asset family the UI is showing (drives the lobby filter + dropdown). */
+    const selectedAsset = assetOfTable(tableChoice as string);
+    /** True once the table is a deliberate choice (click, deep link, saved
+     *  pick) — suppresses balance auto-detection. */
+    const navigated = useRef(false);
+    /** True once the choice is real at all (navigation OR auto-detection) —
+     *  before that the URL isn't stamped, so a default render can't
+     *  masquerade as a shared link on the next reload. */
+    const chosen = useRef(false);
+    const pickTable = useCallback((t: TableChoice) => {
+        navigated.current = true;
+        chosen.current = true;
+        localStorage.setItem("bj-last-table", t as string);
+        setTableChoice(t);
+    }, []);
 
-    // Invite deep-links: ?table=<address|v1> lands a friend directly at a table,
-    // and picking a table keeps the URL shareable.
+    // Invite deep-links: ?table=<address|v1> lands a friend directly at a table;
+    // otherwise the last explicitly-picked table is restored.
     useEffect(() => {
         const t = new URLSearchParams(window.location.search).get("table");
-        if (!t) return;
-        if (t === "v1") setTableChoice("v1");
-        else if (/^0x[0-9a-fA-F]{40}$/.test(t)) setTableChoice(t as TableChoice);
+        const saved = localStorage.getItem("bj-last-table");
+        const pick = [t, saved].find(
+            (v) => v === "v1" || (v && /^0x[0-9a-fA-F]{40}$/.test(v)),
+        );
+        if (!pick) return;
+        navigated.current = true;
+        chosen.current = true;
+        setTableChoice(pick as TableChoice);
     }, []);
     useEffect(() => {
+        if (!chosen.current) return;
         const url = new URL(window.location.href);
         if (tableChoice === "v1") url.searchParams.set("table", "v1");
         else url.searchParams.set("table", tableChoice as string);
@@ -533,6 +559,47 @@ export default function Page() {
         args: [address ?? "0x0000000000000000000000000000000000000000", TABLE_ADDRESS],
         query: {...POLL, enabled: isConnected},
     });
+
+    // What does this wallet actually hold? Feeds the asset dropdown (balance
+    // per option) and the first-visit default below.
+    const {data: assetBals} = useReadContracts({
+        contracts: ASSETS.map(
+            (a) =>
+                ({
+                    address: a.token,
+                    abi: testChipAbi,
+                    functionName: "balanceOf",
+                    args: [address ?? "0x0000000000000000000000000000000000000000"],
+                }) as const,
+        ),
+        query: {refetchInterval: 5000, enabled: isConnected && !!address},
+    });
+    /** Auto-detect the starting asset ONCE per visit: land on whichever asset
+     *  the wallet can play the longest with (balance measured in default-size
+     *  bets, so tokens with wildly different scales compare fairly). Explicit
+     *  choices — a click, a shared ?table= link, a saved pick — always win. */
+    const detected = useRef(false);
+    useEffect(() => {
+        if (detected.current || navigated.current || !isConnected || !assetBals) return;
+        if (assetBals.some((b) => b.status !== "success")) return;
+        detected.current = true;
+        let best = "";
+        let bestScore = 0n;
+        ASSETS.forEach((a, i) => {
+            const bal = (assetBals[i]!.result as bigint | undefined) ?? 0n;
+            const unit = parseEther(defaultWager(a.symbol));
+            const score = unit > 0n ? bal / unit : 0n;
+            if (score > bestScore) {
+                best = a.symbol;
+                bestScore = score;
+            }
+        });
+        if (!best) return; // nothing playable yet — stay on CHIP (free faucet)
+        chosen.current = true;
+        setTableChoice((cur) =>
+            assetOfTable(cur as string) === best ? cur : defaultTableForAsset(best),
+        );
+    }, [assetBals, isConnected]);
     const {data: liquidity} = useReadContract({...table, functionName: "liquidity", query: POLL});
     const {data: minWager} = useReadContract({...table, functionName: "minWager", query: POLL});
     const {data: maxWager} = useReadContract({...table, functionName: "maxWager", query: POLL});
@@ -1078,14 +1145,47 @@ export default function Page() {
                     return null;
                 }
                 return (
-                    <button className="live-banner" onClick={() => setTableChoice(jr.table)}>
+                    <button className="live-banner" onClick={() => pickTable(jr.table)}>
                         🔴 LIVE — a round is filling at ♾️ {jr.symbol} Infinite · {jr.playerCount}{" "}
                         player{jr.playerCount === 1 ? "" : "s"} in · {Math.max(0, jr.betDeadline - now)}s
                         left to join →
                     </button>
                 );
             })()}
-            <Lobby selected={tableChoice} onSelect={setTableChoice} live={liveRounds} />
+            <div className="panel row">
+                <span className="status">
+                    🎰 Playing with{" "}
+                    <strong>{selectedAsset === "ETH" ? "ETH (as WETH)" : selectedAsset}</strong>
+                    {isConnected && assetBals
+                        ? ` — you hold ${fmt(
+                              (assetBals[ASSETS.findIndex((a) => a.symbol === selectedAsset)]
+                                  ?.result as bigint | undefined) ?? 0n,
+                          )}`
+                        : ""}
+                </span>
+                <select
+                    value={selectedAsset}
+                    onChange={(e) => pickTable(defaultTableForAsset(e.target.value))}
+                    aria-label="Wager asset"
+                >
+                    {ASSETS.map((a, i) => {
+                        const b = assetBals?.[i]?.result as bigint | undefined;
+                        return (
+                            <option key={a.symbol} value={a.symbol}>
+                                {a.symbol}
+                                {isConnected && b !== undefined ? ` — ${fmt(b)}` : ""}
+                            </option>
+                        );
+                    })}
+                </select>
+            </div>
+
+            <Lobby
+                selected={tableChoice}
+                onSelect={pickTable}
+                live={liveRounds}
+                asset={selectedAsset}
+            />
 
             {tableChoice === "v1" && (
             <div className="panel stats">
@@ -1385,7 +1485,7 @@ export default function Page() {
 
             <StatsPanel address={address} />
 
-            <PresencePanel tableChoice={tableChoice} onSelect={setTableChoice} mainWallet={address} />
+            <PresencePanel tableChoice={tableChoice} onSelect={pickTable} mainWallet={address} />
             <Chat />
 
             <div className="panel status">

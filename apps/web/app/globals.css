@@ -202,6 +202,16 @@ input {
     width: 130px;
 }
 
+select {
+    background: var(--panel2);
+    border: 1px solid #2c4270;
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 15px;
+    padding: 10px 12px;
+    cursor: pointer;
+}
+
 .cards {
     display: flex;
     gap: 8px;
